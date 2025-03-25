@@ -455,6 +455,30 @@ async function startBot() {
       retryRequestDelayMs: 250,
       qrMaxRetries: 5,
       logger,
+      browser: ["Chrome (Linux)", "Chrome", "1.0.0"],
+      keepAliveIntervalMs: 25000,
+      maxRetries: 5,
+      patchMessageBeforeSending: (message) => {
+        const requiresPatch = !!(
+          message.buttonsMessage ||
+          message.templateMessage ||
+          message.listMessage
+        );
+        if (requiresPatch) {
+          message = {
+            viewOnceMessage: {
+              message: {
+                messageContextInfo: {
+                  deviceListMetadataVersion: 2,
+                  deviceListMetadata: {},
+                },
+                ...message,
+              },
+            },
+          };
+        }
+        return message;
+      },
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -463,14 +487,27 @@ async function startBot() {
       const { connection, lastDisconnect } = update;
 
       if (connection === "close") {
-        const shouldReconnect =
-          lastDisconnect?.error?.output?.statusCode !== 401;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = statusCode !== 401;
+
         console.log(
           "Koneksi terputus karena ",
           lastDisconnect.error,
           "Mencoba menghubungkan ulang... ",
           shouldReconnect
         );
+
+        if (statusCode === 401) {
+          // Delete auth_info directory for 401 errors
+          const fs = require("fs");
+          if (fs.existsSync("./auth_info")) {
+            fs.rmSync("./auth_info", { recursive: true, force: true });
+          }
+          console.log(
+            "Auth state deleted due to 401 error. Please scan QR code again."
+          );
+        }
+
         if (shouldReconnect) {
           startBot();
         }
@@ -479,6 +516,22 @@ async function startBot() {
 
         // Mulai scheduler untuk pengingat jadwal kuliah
         notificationHandler.startClassReminderScheduler(sock, db);
+      }
+    });
+
+    // Add error event handler
+    sock.ev.on("error", (error) => {
+      console.error("Socket error:", error);
+
+      // If it's an authentication error, delete auth state
+      if (error.message && error.message.includes("401")) {
+        const fs = require("fs");
+        if (fs.existsSync("./auth_info")) {
+          fs.rmSync("./auth_info", { recursive: true, force: true });
+        }
+        console.log(
+          "Auth state deleted due to authentication error. Please scan QR code again."
+        );
       }
     });
 
