@@ -22,28 +22,28 @@ function isAdmin(sender) {
 
 // Command handlers
 const commands = {
-  ".startbot": async (sock, sender) => {
+  ".start": async (sock, sender) => {
     if (!isAdmin(sender)) {
       await sock.sendMessage(sender, {
-        text: "❌ Maaf, hanya admin yang dapat menggunakan perintah ini.",
+        text: "Maaf, hanya admin yang dapat menggunakan perintah ini.",
       });
       return;
     }
 
     if (isBotRunning) {
       await sock.sendMessage(sender, {
-        text: "❌ Bot sudah berjalan.",
+        text: "Bot sudah berjalan.",
       });
       return;
     }
 
     isBotRunning = true;
     await sock.sendMessage(sender, {
-      text: "✅ Bot berhasil diaktifkan!",
+      text: "Bot berhasil diaktifkan!",
     });
   },
 
-  ".stopbot": async (sock, sender) => {
+  ".stop": async (sock, sender) => {
     if (!isAdmin(sender)) {
       await sock.sendMessage(sender, {
         text: "❌ Maaf, hanya admin yang dapat menggunakan perintah ini.",
@@ -53,14 +53,14 @@ const commands = {
 
     if (!isBotRunning) {
       await sock.sendMessage(sender, {
-        text: "❌ Bot sudah berhenti.",
+        text: "Bot sudah berhenti.",
       });
       return;
     }
 
     isBotRunning = false;
     await sock.sendMessage(sender, {
-      text: "✅ Bot berhasil dihentikan!",
+      text: "Bot berhasil dihentikan!",
     });
   },
 
@@ -75,7 +75,16 @@ const commands = {
       `.notifon - Mengaktifkan notifikasi tugas baru dan pengingat jadwal kuliah\n` +
       `.notifoff - Menonaktifkan notifikasi\n\n` +
       `Kamu bisa gunakan bot ini di pesan pribadi`;
-    // Tidak usah tambah menu komting disini
+    // jangan tambahkan menu lagi disini
+
+    await sock.sendMessage(sender, { text: helpText });
+  },
+
+  ".menufun": async (sock, sender) => {
+    const helpText =
+      `*Menu Fun*\n\n` +
+      `*Perintah yang tersedia:*\n` +
+      `Belum ada perintah fun yang tersedia\n`;
 
     await sock.sendMessage(sender, { text: helpText });
   },
@@ -104,19 +113,12 @@ const commands = {
       `  Contoh: .edit_dosen AB "Prof. Dr. Budi Santoso" "08123456789"\n\n` +
       `• .hapus_dosen [id]\n` +
       `  Contoh: .hapus_dosen AB\n\n` +
-      `*4. Pengumuman*\n` +
-      `• .broadcast [pesan]\n` +
-      `  Contoh: .broadcast Pengumuman penting untuk kelas DB\n\n` +
-      `*5. Persetujuan Notifikasi*\n` +
-      `• .setuju_jadwal [id_jadwal]\n` +
-      `  Contoh: .setuju_jadwal AB\n\n` +
       `*Catatan:*\n` +
       `• Gunakan tanda kutip (") untuk teks yang mengandung spasi\n` +
       `• Format hari: 1-7 (1=Senin, 2=Selasa, dst)\n` +
       `• Format waktu: HH:MM (contoh: 14:00)\n` +
       `• Format tanggal: YYYY-MM-DD (contoh: 2024-03-20)\n` +
-      `• Ketik .ya untuk mengkonfirmasi penghapusan/pengeditan\n` +
-      `• Semua notifikasi tugas dan jadwal harus disetujui sebelum dikirim ke anggota kelas`;
+      `• Ketik .ya untuk mengkonfirmasi penghapusan/pengeditan\n`;
 
     await sock.sendMessage(sender, { text: helpText });
   },
@@ -455,30 +457,6 @@ async function startBot() {
       retryRequestDelayMs: 250,
       qrMaxRetries: 5,
       logger,
-      browser: ["Chrome (Linux)", "Chrome", "1.0.0"],
-      keepAliveIntervalMs: 25000,
-      maxRetries: 5,
-      patchMessageBeforeSending: (message) => {
-        const requiresPatch = !!(
-          message.buttonsMessage ||
-          message.templateMessage ||
-          message.listMessage
-        );
-        if (requiresPatch) {
-          message = {
-            viewOnceMessage: {
-              message: {
-                messageContextInfo: {
-                  deviceListMetadataVersion: 2,
-                  deviceListMetadata: {},
-                },
-                ...message,
-              },
-            },
-          };
-        }
-        return message;
-      },
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -487,27 +465,14 @@ async function startBot() {
       const { connection, lastDisconnect } = update;
 
       if (connection === "close") {
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const shouldReconnect = statusCode !== 401;
-
+        const shouldReconnect =
+          lastDisconnect?.error?.output?.statusCode !== 401;
         console.log(
           "Koneksi terputus karena ",
           lastDisconnect.error,
           "Mencoba menghubungkan ulang... ",
           shouldReconnect
         );
-
-        if (statusCode === 401) {
-          // Delete auth_info directory for 401 errors
-          const fs = require("fs");
-          if (fs.existsSync("./auth_info")) {
-            fs.rmSync("./auth_info", { recursive: true, force: true });
-          }
-          console.log(
-            "Auth state deleted due to 401 error. Please scan QR code again."
-          );
-        }
-
         if (shouldReconnect) {
           startBot();
         }
@@ -516,22 +481,6 @@ async function startBot() {
 
         // Mulai scheduler untuk pengingat jadwal kuliah
         notificationHandler.startClassReminderScheduler(sock, db);
-      }
-    });
-
-    // Add error event handler
-    sock.ev.on("error", (error) => {
-      console.error("Socket error:", error);
-
-      // If it's an authentication error, delete auth state
-      if (error.message && error.message.includes("401")) {
-        const fs = require("fs");
-        if (fs.existsSync("./auth_info")) {
-          fs.rmSync("./auth_info", { recursive: true, force: true });
-        }
-        console.log(
-          "Auth state deleted due to authentication error. Please scan QR code again."
-        );
       }
     });
 
@@ -603,7 +552,10 @@ async function startBot() {
 
               // Check if bot is running for other commands
               if (!isBotRunning) {
-                return; // Don't respond when bot is stopped
+                await sock.sendMessage(sender, {
+                  text: "❌ Bot sedang tidak aktif. Silakan hubungi admin untuk mengaktifkan bot.",
+                });
+                return;
               }
 
               // Cek apakah ini adalah perintah yang berkaitan dengan tugas
@@ -622,8 +574,12 @@ async function startBot() {
                 // Untuk perintah lain, kirim respons ke sumber pesan (grup/pribadi)
                 await commandHandler(sock, sender, db, args);
               }
+            } else {
+              // Kirim pesan error ke sumber yang sama
+              await sock.sendMessage(sender, {
+                text: "Perintah tidak dikenal. Ketik .menu untuk melihat daftar perintah yang tersedia.",
+              });
             }
-            // Don't respond to unknown commands
           } else {
             if (
               messageText.length > 50 ||

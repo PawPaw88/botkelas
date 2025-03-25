@@ -142,7 +142,7 @@ const notificationHandler = {
   sendClassReminder: async (sock, db) => {
     try {
       const scheduleCollection = db.collection("schedules");
-      const komtingId = "08970401161@s.whatsapp.net";
+      const komtingId = "628970401161@s.whatsapp.net";
       const scheduleHandler = require("./scheduleHandler");
 
       // Dapatkan waktu saat ini
@@ -191,36 +191,61 @@ const notificationHandler = {
           `*${today}*\n` +
           `${scheduleHandler.formatScheduleTime(schedule)}`;
 
-        // Format pesan persetujuan untuk komting
-        const approvalMessage =
-          `*⏰ Permintaan Persetujuan Notifikasi Jadwal*\n\n` +
-          `Jadwal kelas berikut akan dimulai dalam 30 menit:\n\n` +
-          `*${today}*\n` +
-          `${scheduleHandler.formatScheduleTime(schedule)}\n\n` +
-          `Apakah jadwal ini akan berlangsung? Jika ya, ketik .setuju_jadwal ${schedule._id} untuk mengirim pengingat ke semua anggota kelas.`;
+        // Dapatkan semua pengguna yang aktif berlangganan
+        const notificationCollection = db.collection("notifications");
+        const subscribers = await notificationCollection
+          .find({ isActive: true })
+          .toArray();
 
-        // Simpan notifikasi ke database agar bisa disetujui oleh komting
-        const pendingNotificationsCollection = db.collection(
-          "pendingNotifications"
-        );
-        await pendingNotificationsCollection.insertOne({
-          type: "schedule",
-          scheduleId: schedule._id,
-          message: message,
-          createdAt: new Date(),
-          approved: false,
-          sent: false,
-        });
+        if (subscribers.length === 0) {
+          console.log("Tidak ada pengguna yang berlangganan notifikasi.");
+          continue;
+        }
 
-        // Kirim pesan persetujuan ke komting
-        await sock.sendMessage(komtingId, { text: approvalMessage });
+        // Kirim notifikasi langsung ke semua subscriber
+        let successCount = 0;
+        const batchSize = 5; // Jumlah pesan yang dikirim dalam satu batch
+        const delayBetweenBatches = 3000; // Delay 3 detik antar batch
+
+        for (let i = 0; i < subscribers.length; i += batchSize) {
+          const batch = subscribers.slice(i, i + batchSize);
+
+          // Kirim pesan ke batch saat ini
+          const promises = batch.map(async (subscriber) => {
+            try {
+              // Jangan kirim ke komting
+              if (subscriber.userId !== komtingId) {
+                const success = await notificationHandler.sendMessageWithRetry(
+                  sock,
+                  subscriber.userId,
+                  { text: message }
+                );
+                if (success) successCount++;
+              }
+            } catch (error) {
+              console.error(
+                `Error sending notification to ${subscriber.userId}:`,
+                error
+              );
+            }
+          });
+
+          await Promise.all(promises);
+
+          // Jika masih ada batch selanjutnya, tunggu beberapa detik
+          if (i + batchSize < subscribers.length) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, delayBetweenBatches)
+            );
+          }
+        }
 
         console.log(
-          `Permintaan persetujuan pengingat kelas ${schedule.subject} telah dikirim ke komting.`
+          `Notifikasi jadwal ${schedule.subject} berhasil dikirim ke ${successCount} pengguna.`
         );
       }
     } catch (error) {
-      console.error("Error sending class reminders approval request:", error);
+      console.error("Error sending class reminders:", error);
     }
   },
 
