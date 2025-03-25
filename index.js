@@ -9,8 +9,61 @@ const dosenHandler = require("./handlers/dosenHandler");
 const notificationHandler = require("./handlers/notificationHandler");
 require("dotenv").config();
 
+// Bot control state
+let isBotRunning = true;
+
+// Admin number
+const ADMIN_NUMBER = "089670401161@s.whatsapp.net";
+
+// Function to check if sender is admin
+function isAdmin(sender) {
+  return sender === ADMIN_NUMBER;
+}
+
 // Command handlers
 const commands = {
+  ".startbot": async (sock, sender) => {
+    if (!isAdmin(sender)) {
+      await sock.sendMessage(sender, {
+        text: "❌ Maaf, hanya admin yang dapat menggunakan perintah ini.",
+      });
+      return;
+    }
+
+    if (isBotRunning) {
+      await sock.sendMessage(sender, {
+        text: "❌ Bot sudah berjalan.",
+      });
+      return;
+    }
+
+    isBotRunning = true;
+    await sock.sendMessage(sender, {
+      text: "✅ Bot berhasil diaktifkan!",
+    });
+  },
+
+  ".stopbot": async (sock, sender) => {
+    if (!isAdmin(sender)) {
+      await sock.sendMessage(sender, {
+        text: "❌ Maaf, hanya admin yang dapat menggunakan perintah ini.",
+      });
+      return;
+    }
+
+    if (!isBotRunning) {
+      await sock.sendMessage(sender, {
+        text: "❌ Bot sudah berhenti.",
+      });
+      return;
+    }
+
+    isBotRunning = false;
+    await sock.sendMessage(sender, {
+      text: "✅ Bot berhasil dihentikan!",
+    });
+  },
+
   ".menu": async (sock, sender) => {
     const helpText =
       `*Halo! Saya bot untuk membantu koordinasi kelas DB. Ketik .menu untuk melihat perintah yang tersedia ya*\n\n` +
@@ -481,6 +534,23 @@ async function startBot() {
               caselessCommands[`.${command.toLowerCase()}`];
 
             if (commandHandler) {
+              // Allow bot control commands even when bot is stopped
+              if (
+                command.toLowerCase() === "startbot" ||
+                command.toLowerCase() === "stopbot"
+              ) {
+                await commandHandler(sock, normalizedSenderID, db, args);
+                return;
+              }
+
+              // Check if bot is running for other commands
+              if (!isBotRunning) {
+                await sock.sendMessage(sender, {
+                  text: "❌ Bot sedang tidak aktif. Silakan hubungi admin untuk mengaktifkan bot.",
+                });
+                return;
+              }
+
               // Cek apakah ini adalah perintah yang berkaitan dengan tugas
               if (command.toLowerCase() === "selesai") {
                 // Untuk tugas, gunakan ID pengirim yang dinormalisasi (bukan grup)
@@ -537,17 +607,4 @@ async function startBot() {
   }
 }
 
-startBot().catch((error) => {
-  console.error("Critical error in startBot function:");
-  console.error(error);
-
-  // Log specific details about crypto module errors
-  if (error.message && error.message.includes("crypto")) {
-    console.error(
-      "This is likely a Node.js version issue. Make sure you're using Node.js v16 or higher."
-    );
-    console.error("Current Node.js version:", process.version);
-  }
-
-  process.exit(1);
-});
+startBot().catch(console.error);
