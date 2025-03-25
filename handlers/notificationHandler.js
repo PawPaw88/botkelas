@@ -253,7 +253,7 @@ const notificationHandler = {
   approveScheduleNotification: async (sock, sender, db, scheduleId) => {
     try {
       // Verifikasi bahwa yang menyetujui adalah komting
-      const komtingId = "08970401161@s.whatsapp.net";
+      const komtingId = "628970401161@s.whatsapp.net";
       const normalizedSender = sender.includes("@")
         ? sender
         : `${sender}@s.whatsapp.net`;

@@ -7,6 +7,7 @@ const scheduleHandler = require("./handlers/scheduleHandler");
 const taskHandler = require("./handlers/taskHandler");
 const dosenHandler = require("./handlers/dosenHandler");
 const notificationHandler = require("./handlers/notificationHandler");
+const gameHandler = require("./handlers/gameHandler");
 require("dotenv").config();
 
 // Bot control state
@@ -387,6 +388,31 @@ const commands = {
       scheduleId
     );
   },
+
+  ".f100": async (sock, sender, db, args) => {
+    // Cek apakah pesan dari grup
+    if (!sender.endsWith("@g.us")) {
+      await sock.sendMessage(sender, {
+        text: "❌ Game Family 100 hanya dapat dimainkan di grup!",
+      });
+      return;
+    }
+
+    await gameHandler.startFamily100(sock, sender, sender);
+  },
+
+  ".nyerah": async (sock, sender, db, args) => {
+    // Cek apakah pesan dari grup
+    if (!sender.endsWith("@g.us")) {
+      await sock.sendMessage(sender, {
+        text: "❌ Game Family 100 hanya dapat dimainkan di grup!",
+      });
+      return;
+    }
+
+    await gameHandler.endFamily100(sock, sender, sender);
+    await gameHandler.showScores(sock, sender);
+  },
 };
 
 // Convert all command keys to lowercase for case-insensitive matching
@@ -552,10 +578,7 @@ async function startBot() {
 
               // Check if bot is running for other commands
               if (!isBotRunning) {
-                await sock.sendMessage(sender, {
-                  text: "❌ Bot sedang tidak aktif. Silakan hubungi admin untuk mengaktifkan bot.",
-                });
-                return;
+                return; // Langsung return tanpa mengirim pesan
               }
 
               // Cek apakah ini adalah perintah yang berkaitan dengan tugas
@@ -574,13 +597,25 @@ async function startBot() {
                 // Untuk perintah lain, kirim respons ke sumber pesan (grup/pribadi)
                 await commandHandler(sock, sender, db, args);
               }
-            } else {
-              // Kirim pesan error ke sumber yang sama
-              await sock.sendMessage(sender, {
-                text: "Perintah tidak dikenal. Ketik .menu untuk melihat daftar perintah yang tersedia.",
-              });
             }
           } else {
+            // Jika bot sedang tidak aktif, abaikan semua pesan
+            if (!isBotRunning) {
+              return;
+            }
+
+            // Cek apakah ada game Family 100 yang aktif di grup ini
+            if (isGroup && gameHandler.activeGames.has(sender)) {
+              // Proses jawaban Family 100
+              await gameHandler.processAnswer(
+                sock,
+                normalizedSenderID,
+                sender,
+                messageText
+              );
+              return;
+            }
+
             if (
               messageText.length > 50 ||
               messageText.includes("pengumuman") ||
