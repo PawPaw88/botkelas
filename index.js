@@ -13,7 +13,7 @@ require("dotenv").config();
 let isBotRunning = true;
 
 // Admin number
-const ADMIN_NUMBER = "089670401161@s.whatsapp.net";
+const ADMIN_NUMBER = "6289670401161@s.whatsapp.net";
 
 // Function to check if sender is admin
 function isAdmin(sender) {
@@ -485,25 +485,30 @@ async function startBot() {
     sock.ev.on("messages.upsert", async ({ messages }) => {
       const msg = messages[0];
       if (!msg.key.fromMe) {
-        const sender = msg.key.remoteJid;
-        // Mendapatkan teks pesan dari berbagai jenis pesan WhatsApp
-        const messageText =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          "";
-
-        // Mendapatkan ID pengirim jika dalam grup
-        const rawSenderID = msg.key.participant || sender;
-
-        // Normalisasi ID pengirim dan grup
-        const normalizedSenderID = normalizeUserID(rawSenderID);
-
-        // Cek apakah pesan dari grup
-        const isGroup = sender.endsWith("@g.us");
-
         try {
+          const sender = msg.key.remoteJid;
+          // Mendapatkan teks pesan dari berbagai jenis pesan WhatsApp
+          const messageText =
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            msg.message?.imageMessage?.caption ||
+            msg.message?.videoMessage?.caption ||
+            "";
+
+          // Skip if message is empty or undefined
+          if (!messageText) {
+            return;
+          }
+
+          // Mendapatkan ID pengirim jika dalam grup
+          const rawSenderID = msg.key.participant || sender;
+
+          // Normalisasi ID pengirim dan grup
+          const normalizedSenderID = normalizeUserID(rawSenderID);
+
+          // Cek apakah pesan dari grup
+          const isGroup = sender.endsWith("@g.us");
+
           // Handle commands - now case-insensitive
           if (messageText.trim().startsWith(".")) {
             // Extract command and arguments, preserving case of arguments
@@ -591,11 +596,20 @@ async function startBot() {
             }
           }
         } catch (error) {
-          console.error("Error:", error);
-          // Kirim pesan error ke sumber yang sama
-          await sock.sendMessage(sender, {
-            text: "Maaf, terjadi kesalahan. Silakan coba lagi nanti.",
-          });
+          // Log the error but don't crash
+          console.error("Error processing message:", error);
+
+          // If it's a decryption error, try to recover the session
+          if (error.message && error.message.includes("Bad MAC")) {
+            console.log(
+              "Decryption error detected, attempting to recover session..."
+            );
+            const fs = require("fs");
+            if (fs.existsSync("./auth_info")) {
+              fs.rmSync("./auth_info", { recursive: true, force: true });
+            }
+            startBot();
+          }
         }
       }
     });
