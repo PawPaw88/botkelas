@@ -603,10 +603,7 @@ async function startBot() {
 
               // Check if bot is running for other commands
               if (!isBotRunning) {
-                await sock.sendMessage(sender, {
-                  text: "❌ Bot sedang tidak aktif. Silakan hubungi admin untuk mengaktifkan bot.",
-                });
-                return;
+                return; // Don't respond when bot is stopped
               }
 
               // Cek apakah ini adalah perintah yang berkaitan dengan tugas
@@ -625,12 +622,8 @@ async function startBot() {
                 // Untuk perintah lain, kirim respons ke sumber pesan (grup/pribadi)
                 await commandHandler(sock, sender, db, args);
               }
-            } else {
-              // Kirim pesan error ke sumber yang sama
-              await sock.sendMessage(sender, {
-                text: "Perintah tidak dikenal. Ketik .menu untuk melihat daftar perintah yang tersedia.",
-              });
             }
+            // Don't respond to unknown commands
           } else {
             if (
               messageText.length > 50 ||
