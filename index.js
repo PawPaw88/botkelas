@@ -483,6 +483,15 @@ async function startBot() {
       retryRequestDelayMs: 250,
       qrMaxRetries: 5,
       logger,
+      session: {
+        maxAge: 24 * 60 * 60 * 1000,
+        maxMessages: 100,
+        cleanupInterval: 60 * 60 * 1000,
+      },
+      reconnectInterval: 5000,
+      maxRetries: 5,
+      keepAliveIntervalMs: 25000,
+      timeoutMs: 60000,
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -500,13 +509,34 @@ async function startBot() {
           shouldReconnect
         );
         if (shouldReconnect) {
-          startBot();
+          setTimeout(() => {
+            startBot();
+          }, 5000);
         }
       } else if (connection === "open") {
         console.log("Bot berhasil terhubung!");
 
-        // Mulai scheduler untuk pengingat jadwal kuliah
         notificationHandler.startClassReminderScheduler(sock, db);
+      }
+    });
+
+    sock.ev.on("error", async (error) => {
+      console.error("Error pada sesi WhatsApp:", error);
+
+      if (error.message && error.message.includes("stale")) {
+        console.log("Mendeteksi sesi yang stale, mencoba membersihkan...");
+        try {
+          if (fs.existsSync("./auth_info")) {
+            fs.rmSync("./auth_info", { recursive: true, force: true });
+          }
+          fs.mkdirSync("./auth_info", { recursive: true });
+
+          setTimeout(() => {
+            startBot();
+          }, 5000);
+        } catch (err) {
+          console.error("Error saat membersihkan sesi:", err);
+        }
       }
     });
 
