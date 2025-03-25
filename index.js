@@ -355,10 +355,16 @@ function normalizeUserID(id) {
 }
 
 async function startBot() {
-  const client = new MongoClient(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  });
+  // Check if MONGO_URI exists
+  if (!process.env.MONGO_URI) {
+    console.error(
+      "MONGO_URI environment variable is not set! Please configure it in Railway variables."
+    );
+    process.exit(1);
+  }
+
+  // Updated MongoDB connection without deprecated options
+  const client = new MongoClient(process.env.MONGO_URI);
 
   try {
     console.log("Mencoba menghubungkan ke MongoDB Atlas...");
@@ -367,6 +373,12 @@ async function startBot() {
 
     const db = client.db("wa-bot");
     const collection = db.collection("messages");
+
+    // Create auth_info directory if it doesn't exist
+    const fs = require("fs");
+    if (!fs.existsSync("./auth_info")) {
+      fs.mkdirSync("./auth_info", { recursive: true });
+    }
 
     const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 
@@ -525,4 +537,17 @@ async function startBot() {
   }
 }
 
-startBot().catch(console.error);
+startBot().catch((error) => {
+  console.error("Critical error in startBot function:");
+  console.error(error);
+
+  // Log specific details about crypto module errors
+  if (error.message && error.message.includes("crypto")) {
+    console.error(
+      "This is likely a Node.js version issue. Make sure you're using Node.js v16 or higher."
+    );
+    console.error("Current Node.js version:", process.version);
+  }
+
+  process.exit(1);
+});
