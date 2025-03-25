@@ -25,21 +25,21 @@ const commands = {
   ".start": async (sock, sender) => {
     if (!isAdmin(sender)) {
       await sock.sendMessage(sender, {
-        text: "Maaf, hanya admin yang dapat menggunakan perintah ini.",
+        text: "❌ Maaf, hanya admin yang dapat menggunakan perintah ini.",
       });
       return;
     }
 
     if (isBotRunning) {
       await sock.sendMessage(sender, {
-        text: "Bot sudah berjalan.",
+        text: "❌ Bot sudah berjalan.",
       });
       return;
     }
 
     isBotRunning = true;
     await sock.sendMessage(sender, {
-      text: "Bot berhasil diaktifkan!",
+      text: "✅ Bot berhasil diaktifkan!",
     });
   },
 
@@ -53,14 +53,14 @@ const commands = {
 
     if (!isBotRunning) {
       await sock.sendMessage(sender, {
-        text: "Bot sudah berhenti.",
+        text: "❌ Bot sudah berhenti.",
       });
       return;
     }
 
     isBotRunning = false;
     await sock.sendMessage(sender, {
-      text: "Bot berhasil dihentikan!",
+      text: "✅ Bot berhasil dihentikan!",
     });
   },
 
@@ -543,8 +543,8 @@ async function startBot() {
             if (commandHandler) {
               // Allow bot control commands even when bot is stopped
               if (
-                command.toLowerCase() === "startbot" ||
-                command.toLowerCase() === "stopbot"
+                command.toLowerCase() === "start" ||
+                command.toLowerCase() === "stop"
               ) {
                 await commandHandler(sock, normalizedSenderID, db, args);
                 return;
