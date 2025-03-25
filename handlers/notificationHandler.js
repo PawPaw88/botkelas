@@ -30,7 +30,7 @@ const notificationHandler = {
         );
 
         await sock.sendMessage(sender, {
-          text: "✅ Notifikasi berhasil diaktifkan kembali! Anda akan menerima pemberitahuan untuk tugas baru dan jadwal kuliah 15 menit sebelum dimulai.",
+          text: "✅ Notifikasi berhasil diaktifkan kembali! Anda akan menerima pemberitahuan untuk tugas baru dan jadwal kuliah 30 menit sebelum dimulai.",
         });
         return;
       }
@@ -44,7 +44,7 @@ const notificationHandler = {
       });
 
       await sock.sendMessage(sender, {
-        text: "✅ Berhasil mendaftar notifikasi! Anda akan menerima pemberitahuan untuk tugas baru dan jadwal kuliah 15 menit sebelum dimulai.",
+        text: "✅ Berhasil mendaftar notifikasi! Anda akan menerima pemberitahuan untuk tugas baru dan jadwal kuliah 30 menit sebelum dimulai.",
       });
     } catch (error) {
       console.error("Error subscribing notification:", error);
