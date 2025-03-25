@@ -7,8 +7,6 @@ const scheduleHandler = require("./handlers/scheduleHandler");
 const taskHandler = require("./handlers/taskHandler");
 const dosenHandler = require("./handlers/dosenHandler");
 const notificationHandler = require("./handlers/notificationHandler");
-const fs = require("fs");
-const path = require("path");
 require("dotenv").config();
 
 // Bot control state
@@ -429,16 +427,13 @@ async function startBot() {
     const db = client.db("wa-bot");
     const collection = db.collection("messages");
 
-    // Create auth_info directory in Railway's persistent storage
-    const authFolder = path.join(
-      process.env.RAILWAY_VOLUME_MOUNT_PATH || "./",
-      "auth_info"
-    );
-    if (!fs.existsSync(authFolder)) {
-      fs.mkdirSync(authFolder, { recursive: true });
+    // Create auth_info directory if it doesn't exist
+    const fs = require("fs");
+    if (!fs.existsSync("./auth_info")) {
+      fs.mkdirSync("./auth_info", { recursive: true });
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+    const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 
     const logger = pino({
       level: "error",
@@ -609,8 +604,9 @@ async function startBot() {
             console.log(
               "Decryption error detected, attempting to recover session..."
             );
-            if (fs.existsSync(authFolder)) {
-              fs.rmSync(authFolder, { recursive: true, force: true });
+            const fs = require("fs");
+            if (fs.existsSync("./auth_info")) {
+              fs.rmSync("./auth_info", { recursive: true, force: true });
             }
             startBot();
           }
