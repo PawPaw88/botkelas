@@ -1,4 +1,85 @@
 const questions = require("./questions");
+const fetch = require("node-fetch");
+
+// Function to check answer using AI
+async function checkAnswerWithAI(question, userAnswer, correctAnswers) {
+  try {
+    const prompt = `Kamu adalah asisten dalam permainan Family 100 yang gaul dan lucu.
+
+    - Pertanyaan: "${question}"
+    - Daftar jawaban yang benar: ${correctAnswers.join(", ")}
+    - Jawaban pemain: "${userAnswer}"
+    
+    Jika jawaban pemain ada di daftar jawaban yang benar / memiliki makna yang sama, benarkan jawaban pemain dan berikan output:
+    "BENAR: jawaban" jawaban harus ada dan persis di daftar jawaban
+
+    contoh:
+    - Jawaban pemain: "mi gorng"
+    - Daftar jawaban yang benar: "nasi goreng, mie goreng, ..."
+    - Output: "BENAR: mie goreng"
+
+    jika jawabannya tidak ada, respon dengan bahasa non formal tanpa mengulangi teks ini. jangan spoiler`;
+
+    const response = await fetch(
+      `https://api.ryzendesu.vip/api/ai/deepseek?text=${encodeURIComponent(
+        prompt
+      )}`,
+      {
+        timeout: 60000,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return {
+        isCorrect: false,
+        correctAnswer: null,
+        message:
+          "Maaf, sedang ada gangguan. Silakan coba lagi dalam beberapa saat.",
+      };
+    }
+
+    const data = await response.json();
+
+    // Pastikan data dan answer ada
+    if (data && data.answer) {
+      if (data.answer.startsWith("BENAR:")) {
+        const correctAnswer = data.answer.split(":")[1].trim();
+        return {
+          isCorrect: true,
+          correctAnswer: correctAnswer,
+          message: "🎉 Benar! Kamu mendapatkan 1 poin!",
+        };
+      } else {
+        // Return the AI's response for wrong answers
+        return {
+          isCorrect: false,
+          correctAnswer: null,
+          message: data.answer,
+        };
+      }
+    }
+
+    // Jika tidak ada jawaban dari AI, berikan respons default
+    return {
+      isCorrect: false,
+      correctAnswer: null,
+      message: "Hmm... jawabanmu kurang tepat. Coba lagi ya! 😊",
+    };
+  } catch (error) {
+    console.error("Error checking answer with AI:", error);
+    // Return default response instead of throwing error
+    return {
+      isCorrect: false,
+      correctAnswer: null,
+      message:
+        "Maaf, sedang ada gangguan. Silakan coba lagi dalam beberapa saat.",
+    };
+  }
+}
 
 const gameHandler = {
   // Menyimpan status game untuk setiap grup
@@ -23,10 +104,12 @@ const gameHandler = {
       const gameState = {
         isActive: true,
         startedBy: sender,
-        groupId: groupId, // Simpan ID grup yang memulai game
-        currentQuestion: randomQuestion, // Simpan pertanyaan yang dipilih
-        answers: new Map(), // Menyimpan jawaban dari setiap peserta
-        scores: new Map(), // Menyimpan skor setiap peserta
+        groupId: groupId,
+        currentQuestion: randomQuestion.question,
+        correctAnswers: randomQuestion.answers.map((a) => a.text),
+        answers: new Map(),
+        scores: new Map(),
+        answeredBy: new Set(),
       };
 
       // Simpan status game
@@ -95,34 +178,66 @@ const gameHandler = {
       }
 
       // Jika jawaban sudah ada dari pengirim ini, abaikan
-      if (gameState.answers.has(sender)) {
+      if (gameState.answeredBy.has(sender)) {
+        await sock.sendMessage(groupId, {
+          text: `@${sender.split("@")[0]} kamu sudah menjawab sebelumnya!`,
+          mentions: [sender],
+        });
         return;
       }
 
-      // Cek apakah jawaban ada dalam daftar jawaban yang benar
-      const correctAnswer = gameState.currentQuestion.answers.find(
-        (a) => a.text.toLowerCase() === answer.toLowerCase()
+      // Check answer using AI
+      const aiCheck = await checkAnswerWithAI(
+        gameState.currentQuestion,
+        answer,
+        gameState.correctAnswers
       );
 
-      if (!correctAnswer) {
-        return; // Abaikan jawaban yang salah
+      if (aiCheck.isCorrect) {
+        // Add score and track answer
+        gameState.scores.set(sender, (gameState.scores.get(sender) || 0) + 1);
+        gameState.answeredBy.add(sender);
+        gameState.answers.set(aiCheck.correctAnswer, sender);
+
+        // Buat daftar jawaban yang sudah dijawab dan yang belum
+        let answersList = "🎯 *Daftar Jawaban:*\n\n";
+        for (let i = 0; i < gameState.correctAnswers.length; i++) {
+          const answer = gameState.correctAnswers[i];
+          const answeredBy = gameState.answers.get(answer);
+          if (answeredBy) {
+            const participantName = answeredBy.split("@")[0];
+            const score = gameState.scores.get(answeredBy);
+            answersList += `${
+              i + 1
+            }. ${answer} - ${score} @${participantName}\n`;
+          } else {
+            answersList += `${i + 1}. ...........\n`;
+          }
+        }
+
+        // Send success message with answers list
+        await sock.sendMessage(groupId, {
+          text: `✅ @${sender.split("@")[0]} benar!\n\n${answersList}`,
+          mentions: Array.from(gameState.answeredBy),
+        });
+
+        // Check if all answers are found
+        if (gameState.answeredBy.size === gameState.correctAnswers.length) {
+          await gameHandler.endFamily100(sock, sender, groupId);
+          await gameHandler.showScores(sock, groupId);
+        }
+      } else {
+        // Send wrong answer message using AI's response
+        await sock.sendMessage(groupId, {
+          text: `@${sender.split("@")[0]} ${aiCheck.message}`,
+          mentions: [sender],
+        });
       }
-
-      // Simpan jawaban
-      gameState.answers.set(sender, answer);
-
-      // Set skor sesuai dengan poin yang ditentukan
-      gameState.scores.set(sender, correctAnswer.points);
-
-      // Kirim konfirmasi jawaban
-      await sock.sendMessage(groupId, {
-        text:
-          `✅ Jawaban benar dari @${sender.split("@")[0]}\n` +
-          `Skor: ${correctAnswer.points} poin`,
-        mentions: [sender],
-      });
     } catch (error) {
       console.error("Error processing answer:", error);
+      await sock.sendMessage(groupId, {
+        text: "❌ Terjadi kesalahan saat memproses jawaban. Silakan coba lagi dalam beberapa saat.",
+      });
     }
   },
 

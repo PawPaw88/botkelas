@@ -1,13 +1,18 @@
 const makeWASocket = require("@whiskeysockets/baileys").default;
 const { MongoClient } = require("mongodb");
-const { useMultiFileAuthState } = require("@whiskeysockets/baileys");
+const {
+  useMultiFileAuthState,
+  downloadMediaMessage,
+} = require("@whiskeysockets/baileys");
 const qrcode = require("qrcode-terminal");
 const pino = require("pino");
+const sharp = require("sharp");
 const scheduleHandler = require("./handlers/scheduleHandler");
 const taskHandler = require("./handlers/taskHandler");
 const dosenHandler = require("./handlers/dosenHandler");
 const notificationHandler = require("./handlers/notificationHandler");
 const gameHandler = require("./handlers/gameHandler");
+const fs = require("fs");
 require("dotenv").config();
 
 // Bot control state
@@ -19,6 +24,262 @@ const ADMIN_NUMBER = "6289670401161@s.whatsapp.net";
 // Function to check if sender is admin
 function isAdmin(sender) {
   return sender === ADMIN_NUMBER;
+}
+
+// Function to clean auth session
+async function cleanAuthSession() {
+  try {
+    if (fs.existsSync("./auth_info")) {
+      fs.rmSync("./auth_info", { recursive: true, force: true });
+    }
+    fs.mkdirSync("./auth_info", { recursive: true });
+    console.log("Sesi berhasil dibersihkan");
+  } catch (err) {
+    console.error("Error saat membersihkan sesi:", err);
+  }
+}
+
+// Function to convert image to sticker
+async function convertToSticker(sock, msg, sender) {
+  try {
+    // Get the image message
+    const imageMessage = msg.message?.imageMessage;
+    if (!imageMessage) {
+      throw new Error("Pesan bukan gambar");
+    }
+
+    // Download the image
+    const buffer = await downloadMediaMessage(
+      msg, // Pass the entire message object
+      "buffer",
+      {},
+      {
+        logger: pino({ level: "error" }),
+        reuploadRequest: sock.updateMediaMessage,
+      }
+    );
+
+    if (!buffer) {
+      throw new Error("Gagal mengunduh gambar");
+    }
+
+    // Process image with sharp
+    const processedBuffer = await sharp(buffer)
+      .resize(512, 512, {
+        fit: "contain",
+        background: { r: 255, g: 255, b: 255, alpha: 0 },
+      })
+      .webp({ quality: 100 })
+      .toBuffer();
+
+    // Send as sticker
+    await sock.sendMessage(sender, {
+      sticker: processedBuffer,
+      mimetype: "image/webp",
+      isAnimated: false,
+      contextInfo: {
+        isForwarded: false,
+        forwardingScore: 0,
+        isStarred: false,
+      },
+      sendMediaAsSticker: true,
+      stickerInfo: {
+        pack: "Bot Sticker",
+        author: "Bot",
+      },
+    });
+  } catch (error) {
+    console.error("Error converting to sticker:", error);
+
+    // Kirim pesan error yang lebih spesifik
+    let errorMessage = "❌ Gagal mengkonversi gambar menjadi stiker.";
+    if (error.code === "ETIMEDOUT") {
+      errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
+    } else if (error.message.includes("download")) {
+      errorMessage += "\n📥 Gagal mengunduh gambar. Silakan coba lagi.";
+    } else if (error.message.includes("bukan gambar")) {
+      errorMessage = "❌ Pesan yang dikirim bukan gambar.";
+    } else if (error.message.includes("No message present")) {
+      errorMessage = "❌ Gagal memproses gambar. Silakan coba lagi.";
+    }
+
+    await sock.sendMessage(sender, {
+      text: errorMessage,
+    });
+  }
+}
+
+// Function to convert sticker to image
+async function convertStickerToImage(sock, msg, sender) {
+  try {
+    // Get the sticker message from either direct message or quoted message
+    const quotedMessage =
+      msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const stickerMessage =
+      msg.message?.stickerMessage || quotedMessage?.stickerMessage;
+
+    if (!stickerMessage) {
+      throw new Error("Pesan bukan sticker");
+    }
+
+    // Create a proper message object for download
+    const messageToDownload = {
+      key: {
+        remoteJid: msg.key.remoteJid,
+        fromMe: msg.key.fromMe,
+        id: msg.key.id,
+        participant: msg.key.participant,
+      },
+      message: {
+        stickerMessage: stickerMessage,
+      },
+    };
+
+    // Download the sticker
+    const buffer = await downloadMediaMessage(
+      messageToDownload,
+      "buffer",
+      {
+        reuploadRequest: sock.updateMediaMessage,
+      },
+      {
+        logger: pino({ level: "error" }),
+      }
+    );
+
+    if (!buffer) {
+      throw new Error("Gagal mengunduh sticker");
+    }
+
+    // Convert buffer to image
+    const imageBuffer = await sharp(buffer).webp().toBuffer();
+
+    // Send as image
+    await sock.sendMessage(sender, {
+      image: imageBuffer,
+      caption: "✅ Sticker berhasil dikonversi menjadi gambar",
+    });
+  } catch (error) {
+    console.error("Error converting sticker to image:", error);
+
+    // Kirim pesan error yang lebih spesifik
+    let errorMessage = "❌ Gagal mengkonversi sticker menjadi gambar.";
+    if (error.code === "ETIMEDOUT") {
+      errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
+    } else if (error.message.includes("download")) {
+      errorMessage += "\n📥 Gagal mengunduh sticker. Silakan coba lagi.";
+    } else if (error.message.includes("bukan sticker")) {
+      errorMessage = "❌ Pesan yang dikirim bukan sticker.";
+    } else if (error.message.includes("No message present")) {
+      errorMessage = "❌ Silakan reply sticker yang ingin dikonversi.";
+    }
+
+    await sock.sendMessage(sender, {
+      text: errorMessage,
+    });
+  }
+}
+
+// Function to check answer using AI
+async function checkAnswerWithAI(question, userAnswer, correctAnswers) {
+  try {
+    const prompt = `Kamu adalah asisten dalam permainan Family 100 yang gaul dan lucu.
+
+    - Pertanyaan: "${question}"
+    - Daftar jawaban yang benar: ${correctAnswers.join(", ")}
+    - Jawaban pemain: "${userAnswer}"
+    
+    Jika jawaban pemain ada di daftar jawaban yang benar / memiliki makna yang sama, benarkan jawaban pemain dan berikan output:
+    "BENAR: jawaban" jawaban harus ada dan persis di daftar jawaban
+
+    contoh:
+    - Jawaban pemain: "mi gorng"
+    - Daftar jawaban yang benar: "nasi goreng, mie goreng, ..."
+    - Output: "BENAR: mie goreng"
+
+    jika jawabannya tidak ada, berikan respon yang lucu dan gaul tanpa mengulangi teks ini. jangan spoiler jawaban yang benar.`;
+
+    const response = await fetch(
+      `https://api.ryzendesu.vip/api/ai/deepseek?text=${encodeURIComponent(
+        prompt
+      )}`,
+      {
+        timeout: 60000,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (data.status && data.answer) {
+      // Check if the answer starts with "BENAR:"
+      if (data.answer.startsWith("BENAR:")) {
+        // Extract the correct answer
+        const correctAnswer = data.answer.split(":")[1].trim();
+        return {
+          isCorrect: true,
+          correctAnswer: correctAnswer,
+          message: "🎉 Benar! Kamu mendapatkan 1 poin!",
+        };
+      } else {
+        // Return the AI's response for wrong answers
+        return {
+          isCorrect: false,
+          correctAnswer: null,
+          message: data.answer,
+        };
+      }
+    }
+
+    return {
+      isCorrect: false,
+      correctAnswer: null,
+      message: "Hmm... jawabanmu kurang tepat. Coba lagi ya! 😊",
+    };
+  } catch (error) {
+    console.error("Error checking answer with AI:", error);
+    return {
+      isCorrect: false,
+      correctAnswer: null,
+      message:
+        "Maaf, terjadi kesalahan saat memeriksa jawaban. Silakan coba lagi.",
+    };
+  }
+}
+
+// Function to chat with AI
+async function chatWithAI(message) {
+  try {
+    const response = await fetch(
+      `https://api.ryzendesu.vip/api/ai/deepseek?text=${encodeURIComponent(
+        message
+      )}`,
+      {
+        timeout: 60000,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.answer || "Maaf, saya tidak bisa memberikan jawaban saat ini.";
+  } catch (error) {
+    console.error("Error chatting with AI:", error);
+    return "Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.";
+  }
 }
 
 // Command handlers
@@ -413,6 +674,76 @@ const commands = {
     await gameHandler.endFamily100(sock, sender, sender);
     await gameHandler.showScores(sock, sender);
   },
+
+  ".tojpg": async (sock, msg, sender) => {
+    try {
+      // Get the sticker message from either direct message or quoted message
+      const quotedMessage =
+        msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+      const stickerMessage =
+        msg.message?.stickerMessage || quotedMessage?.stickerMessage;
+
+      if (!stickerMessage) {
+        throw new Error("Pesan bukan sticker");
+      }
+
+      // Create a proper message object for download
+      const messageToDownload = {
+        key: {
+          remoteJid: msg.key.remoteJid,
+          fromMe: msg.key.fromMe,
+          id: msg.key.id,
+          participant: msg.key.participant,
+        },
+        message: {
+          stickerMessage: stickerMessage,
+        },
+      };
+
+      // Download the sticker
+      const buffer = await downloadMediaMessage(
+        messageToDownload,
+        "buffer",
+        {
+          reuploadRequest: sock.updateMediaMessage,
+        },
+        {
+          logger: pino({ level: "error" }),
+        }
+      );
+
+      if (!buffer) {
+        throw new Error("Gagal mengunduh sticker");
+      }
+
+      // Convert buffer to image
+      const imageBuffer = await sharp(buffer).webp().toBuffer();
+
+      // Send as image
+      await sock.sendMessage(sender, {
+        image: imageBuffer,
+        caption: "✅ Sticker berhasil dikonversi menjadi gambar",
+      });
+    } catch (error) {
+      console.error("Error converting sticker to image:", error);
+
+      // Kirim pesan error yang lebih spesifik
+      let errorMessage = "❌ Gagal mengkonversi sticker menjadi gambar.";
+      if (error.code === "ETIMEDOUT") {
+        errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
+      } else if (error.message.includes("download")) {
+        errorMessage += "\n📥 Gagal mengunduh sticker. Silakan coba lagi.";
+      } else if (error.message.includes("bukan sticker")) {
+        errorMessage = "❌ Pesan yang dikirim bukan sticker.";
+      } else if (error.message.includes("No message present")) {
+        errorMessage = "❌ Silakan reply sticker yang ingin dikonversi.";
+      }
+
+      await sock.sendMessage(sender, {
+        text: errorMessage,
+      });
+    }
+  },
 };
 
 // Convert all command keys to lowercase for case-insensitive matching
@@ -456,7 +787,6 @@ async function startBot() {
     const collection = db.collection("messages");
 
     // Create auth_info directory if it doesn't exist
-    const fs = require("fs");
     if (!fs.existsSync("./auth_info")) {
       fs.mkdirSync("./auth_info", { recursive: true });
     }
@@ -484,9 +814,9 @@ async function startBot() {
       qrMaxRetries: 5,
       logger,
       session: {
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
         maxMessages: 100,
-        cleanupInterval: 60 * 60 * 1000,
+        cleanupInterval: 60 * 60 * 1000, // 1 hour
       },
       reconnectInterval: 5000,
       maxRetries: 5,
@@ -496,7 +826,7 @@ async function startBot() {
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
+    sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect } = update;
 
       if (connection === "close") {
@@ -508,6 +838,13 @@ async function startBot() {
           "Mencoba menghubungkan ulang... ",
           shouldReconnect
         );
+
+        // Jika error 401 (Unauthorized), hapus auth_info dan coba ulang
+        if (lastDisconnect?.error?.output?.statusCode === 401) {
+          console.log("Mendeteksi error 401, membersihkan sesi...");
+          await cleanAuthSession();
+        }
+
         if (shouldReconnect) {
           setTimeout(() => {
             startBot();
@@ -515,7 +852,6 @@ async function startBot() {
         }
       } else if (connection === "open") {
         console.log("Bot berhasil terhubung!");
-
         notificationHandler.startClassReminderScheduler(sock, db);
       }
     });
@@ -523,20 +859,19 @@ async function startBot() {
     sock.ev.on("error", async (error) => {
       console.error("Error pada sesi WhatsApp:", error);
 
-      if (error.message && error.message.includes("stale")) {
-        console.log("Mendeteksi sesi yang stale, mencoba membersihkan...");
-        try {
-          if (fs.existsSync("./auth_info")) {
-            fs.rmSync("./auth_info", { recursive: true, force: true });
-          }
-          fs.mkdirSync("./auth_info", { recursive: true });
+      // Handle berbagai jenis error
+      if (
+        error.message &&
+        (error.message.includes("stale") ||
+          error.message.includes("Bad MAC") ||
+          error.message.includes("Connection Failure"))
+      ) {
+        console.log("Mendeteksi sesi yang bermasalah, membersihkan...");
+        await cleanAuthSession();
 
-          setTimeout(() => {
-            startBot();
-          }, 5000);
-        } catch (err) {
-          console.error("Error saat membersihkan sesi:", err);
-        }
+        setTimeout(() => {
+          startBot();
+        }, 5000);
       }
     });
 
@@ -556,6 +891,40 @@ async function startBot() {
           // Skip if message is empty or undefined
           if (!messageText) {
             return;
+          }
+
+          // Handle AI chat with "/" prefix
+          if (messageText.startsWith("/")) {
+            const aiMessage = messageText.substring(1).trim();
+            if (aiMessage) {
+              const aiResponse = await chatWithAI(aiMessage);
+              await sock.sendMessage(sender, { text: aiResponse });
+              return;
+            }
+          }
+
+          // Handle sticker conversion for images with caption ".s"
+          if (
+            msg.message?.imageMessage &&
+            messageText.trim().toLowerCase() === ".s"
+          ) {
+            await convertToSticker(sock, msg, sender);
+            return;
+          }
+
+          // Handle sticker to image conversion with caption ".tojpg"
+          if (messageText.trim().toLowerCase() === ".tojpg") {
+            // Check if the message is a reply to a sticker
+            const isQuotedSticker =
+              msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+                ?.stickerMessage;
+            // Check if the message itself is a sticker
+            const isDirectSticker = msg.message?.stickerMessage;
+
+            if (isQuotedSticker || isDirectSticker) {
+              await commands[".tojpg"](sock, msg, sender);
+              return;
+            }
           }
 
           // Mendapatkan ID pengirim jika dalam grup
