@@ -369,22 +369,21 @@ function containsToxicWord(message) {
 // Daftar kata-kata toxic
 const toxicWords = [
   "anjeng",
-  "ajg",
   "babi",
   "bangsat",
-  "bgst",
   "kontol",
-  "kntl",
   "memek",
   "jancok",
   "jembot",
   "jembut",
-  "jnck",
   "goblok",
-  "gblk",
   "tolol",
   "kampang",
   "kimak",
+  "silet",
+  "ngentod",
+  "pantek",
+  "bajingan",
 ];
 
 // Daftar audio respons untuk kata toxic
