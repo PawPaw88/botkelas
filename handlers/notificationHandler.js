@@ -145,20 +145,11 @@ const notificationHandler = {
       const komtingId = "628970401161@s.whatsapp.net";
       const scheduleHandler = require("./scheduleHandler");
 
-      // Dapatkan waktu saat ini
+      // Dapatkan waktu saat ini dalam zona waktu WIB (UTC+7)
       const now = new Date();
+      now.setHours(now.getHours() + 7); // Konversi ke WIB
 
-      // Tambahkan 30 menit ke waktu saat ini untuk mencari jadwal yang akan dimulai dalam 30 menit
-      const thirtyMinutesLater = new Date(now.getTime() + 30 * 60 * 1000);
-
-      // Format waktu untuk pencarian (HH:MM format)
-      const targetHour = thirtyMinutesLater.getHours();
-      const targetMinute = thirtyMinutesLater.getMinutes();
-      const targetTimeString = `${String(targetHour).padStart(2, "0")}:${String(
-        targetMinute
-      ).padStart(2, "0")}`;
-
-      // Mendapatkan hari saat ini
+      // Dapatkan hari saat ini dalam WIB
       const dayNames = [
         "Minggu",
         "Senin",
@@ -169,6 +160,22 @@ const notificationHandler = {
         "Sabtu",
       ];
       const today = dayNames[now.getDay()];
+
+      // Format waktu saat ini
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+
+      // Hitung waktu 30 menit dari sekarang untuk mencari jadwal
+      const targetTime = new Date(now);
+      targetTime.setMinutes(targetTime.getMinutes() + 30);
+
+      const targetHour = targetTime.getHours();
+      const targetMinute = targetTime.getMinutes();
+
+      // Format waktu target untuk pencarian (HH:MM format)
+      const targetTimeString = `${String(targetHour).padStart(2, "0")}:${String(
+        targetMinute
+      ).padStart(2, "0")}`;
 
       // Cari jadwal yang akan dimulai dalam 30 menit
       const upcomingSchedules = await scheduleCollection
@@ -182,6 +189,12 @@ const notificationHandler = {
         return;
       }
 
+      // Log untuk debugging
+      console.log(
+        `[${new Date().toISOString()}] Checking schedules for ${today} at ${targetTimeString}`
+      );
+      console.log(`Found ${upcomingSchedules.length} upcoming schedules`);
+
       // Proses setiap jadwal yang akan dimulai
       for (const schedule of upcomingSchedules) {
         // Format pesan notifikasi untuk anggota
@@ -189,7 +202,8 @@ const notificationHandler = {
           `*⏰ Pengingat Jadwal Kuliah*\n\n` +
           `Hai! Hari ini ada kelas *${schedule.subject}* loh. Jangan terlambat ya!\n\n` +
           `*${today}*\n` +
-          `${scheduleHandler.formatScheduleTime(schedule)}`;
+          `${scheduleHandler.formatScheduleTime(schedule)}\n\n` +
+          `_Kelas akan dimulai dalam 30 menit_`;
 
         // Dapatkan semua pengguna yang aktif berlangganan
         const notificationCollection = db.collection("notifications");
@@ -205,7 +219,7 @@ const notificationHandler = {
         // Kirim notifikasi langsung ke semua subscriber
         let successCount = 0;
         const batchSize = 5; // Jumlah pesan yang dikirim dalam satu batch
-        const delayBetweenBatches = 3000; // Delay 3 detik antar batch
+        const delayBetweenBatches = 3000;
 
         for (let i = 0; i < subscribers.length; i += batchSize) {
           const batch = subscribers.slice(i, i + batchSize);
@@ -241,7 +255,9 @@ const notificationHandler = {
         }
 
         console.log(
-          `Notifikasi jadwal ${schedule.subject} berhasil dikirim ke ${successCount} pengguna.`
+          `[${new Date().toISOString()}] Notifikasi jadwal ${
+            schedule.subject
+          } berhasil dikirim ke ${successCount} pengguna.`
         );
       }
     } catch (error) {
@@ -357,10 +373,10 @@ const notificationHandler = {
 
   // Fungsi untuk memulai jadwal pengecekan kelas
   startClassReminderScheduler: (sock, db) => {
-    // Jalankan pengecekan setiap menit
+    // Jalankan pengecekan setiap 30 detik untuk memastikan tidak ada yang terlewat
     setInterval(() => {
       notificationHandler.sendClassReminder(sock, db);
-    }, 60 * 1000); // 60 detik x 1000 = 1 menit
+    }, 30 * 1000); // 30 detik
 
     console.log("Pengingat jadwal kuliah berhasil dimulai!");
   },
