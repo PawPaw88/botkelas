@@ -368,11 +368,8 @@ function containsToxicWord(message) {
 
 // Daftar kata-kata toxic
 const toxicWords = [
-  "anjing",
   "anjeng",
-  "anjg",
   "ajg",
-  "anj",
   "babi",
   "bangsat",
   "bgst",
@@ -383,14 +380,9 @@ const toxicWords = [
   "jembot",
   "jembut",
   "jnck",
-  "jancuk",
-  "asu",
-  "asw",
   "goblok",
   "gblk",
   "tolol",
-  "bacot",
-  "bcot",
   "kampang",
   "kimak",
 ];
