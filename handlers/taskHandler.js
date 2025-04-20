@@ -56,14 +56,9 @@ const taskHandler = {
 
   viewTasks: async (sock, sender, db, showIds = false) => {
     const collection = db.collection("tasks");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
-    // Mengambil tugas yang belum selesai dan mengurutkannya berdasarkan deadline terdekat
-    const tasks = await collection
-      .find({ deadline: { $gte: today } })
-      .sort({ deadline: 1 })
-      .toArray();
+    // Mengambil semua tugas dan mengurutkannya berdasarkan deadline
+    const tasks = await collection.find({}).sort({ deadline: 1 }).toArray();
 
     if (tasks.length === 0) {
       await sock.sendMessage(sender, {

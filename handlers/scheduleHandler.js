@@ -18,12 +18,10 @@ const scheduleHandler = {
 
   viewSchedule: async (sock, sender, db, showIds = false) => {
     const collection = db.collection("schedules");
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
-    // Mengurutkan berdasarkan hari dan waktu
+    // Mengurutkan berdasarkan hari dan waktu, tanpa memperdulikan tanggal
     const schedules = await collection
-      .find({ date: { $gte: today } })
+      .find({})
       .sort({
         day: 1,
         startTime: 1,
@@ -158,17 +156,17 @@ const scheduleHandler = {
       return;
     }
 
-    // Konversi angka hari ke nama hari
+    // Konversi angka hari ke nama hari (1 = Senin, 7 = Minggu)
     const dayNames = [
-      "Minggu",
       "Senin",
       "Selasa",
       "Rabu",
       "Kamis",
       "Jumat",
       "Sabtu",
+      "Minggu",
     ];
-    const day = dayNames[dayNumber];
+    const day = dayNames[dayNumber - 1]; // Kurangi 1 karena array dimulai dari 0
 
     // Validasi format waktu
     const timeRegex = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/;
@@ -181,32 +179,20 @@ const scheduleHandler = {
 
     const [startTime, endTime] = timeRange.split("-");
 
-    // Hitung tanggal untuk hari yang dipilih
-    const today = new Date();
-    const currentDay = today.getDay(); // 0 = Minggu, 1 = Senin, dst
-    const targetDay = dayNumber; // 1 = Senin, 2 = Selasa, dst
-
-    let daysUntilTarget = targetDay - currentDay;
-    if (daysUntilTarget <= 0) {
-      daysUntilTarget += 7; // Jika hari sudah lewat, ambil hari yang sama minggu depan
-    }
-
-    const targetDate = new Date(today);
-    targetDate.setDate(today.getDate() + daysUntilTarget);
-
     const collection = db.collection("schedules");
     const scheduleId = scheduleHandler.generateUniqueId();
 
+    // Simpan jadwal tanpa field date yang bisa kadaluarsa
     await collection.insertOne({
       _id: scheduleId,
       subject,
       lecturer,
       day: day,
-      date: targetDate,
       startTime,
       endTime,
       location,
       createdAt: new Date(),
+      isRecurring: true, // Tandai sebagai jadwal berulang
     });
 
     await sock.sendMessage(sender, {
@@ -346,17 +332,17 @@ const scheduleHandler = {
       return;
     }
 
-    // Konversi angka hari ke nama hari
+    // Konversi angka hari ke nama hari (1 = Senin, 7 = Minggu)
     const dayNames = [
-      "Minggu",
       "Senin",
       "Selasa",
       "Rabu",
       "Kamis",
       "Jumat",
       "Sabtu",
+      "Minggu",
     ];
-    const day = dayNames[dayNumber];
+    const day = dayNames[dayNumber - 1]; // Kurangi 1 karena array dimulai dari 0
 
     // Validasi format waktu
     const timeRegex = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/;

@@ -138,18 +138,32 @@ const notificationHandler = {
     }
   },
 
+  // Fungsi untuk mengkonversi waktu ke menit (format "HH:MM" -> menit sejak tengah malam)
+  convertTimeToMinutes: (timeString) => {
+    const [hours, minutes] = timeString.split(":").map(Number);
+    return hours * 60 + minutes;
+  },
+
+  // Fungsi untuk mengkonversi menit ke format waktu (menit sejak tengah malam -> "HH:MM")
+  convertMinutesToTime: (minutes) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+  },
+
   // Fungsi untuk mengirim notifikasi jadwal kuliah 30 menit sebelum dimulai
   sendClassReminder: async (sock, db) => {
     try {
       const scheduleCollection = db.collection("schedules");
-      const komtingId = "628970401161@s.whatsapp.net";
+      const notificationCollection = db.collection("notifications_sent");
       const scheduleHandler = require("./scheduleHandler");
 
-      // Dapatkan waktu saat ini dalam zona waktu WIB (UTC+7)
-      const now = new Date();
-      now.setHours(now.getHours() + 7); // Konversi ke WIB
+      // Dapatkan waktu saat ini dan konversi ke WIB (UTC+7)
+      const utcNow = new Date();
+      const wibOffset = 7 * 60 * 60 * 1000;
+      const now = new Date(utcNow.getTime() + wibOffset);
 
-      // Dapatkan hari saat ini dalam WIB
+      // Dapatkan hari saat ini dalam WIB (0 = Minggu, 1 = Senin, dst)
       const dayNames = [
         "Minggu",
         "Senin",
@@ -159,55 +173,108 @@ const notificationHandler = {
         "Jumat",
         "Sabtu",
       ];
-      const today = dayNames[now.getDay()];
+      const today = dayNames[now.getUTCDay()];
 
-      // Format waktu saat ini
-      const currentHour = now.getHours();
-      const currentMinute = now.getMinutes();
+      // Hitung waktu saat ini dalam menit (sejak tengah malam)
+      const currentHour = now.getUTCHours();
+      const currentMinute = now.getUTCMinutes();
+      const currentTimeInMinutes = currentHour * 60 + currentMinute;
 
-      // Hitung waktu 30 menit dari sekarang untuk mencari jadwal
-      const targetTime = new Date(now);
-      targetTime.setMinutes(targetTime.getMinutes() + 30);
+      // Hitung waktu 30 menit dari sekarang dalam menit
+      const thirtyMinutesLater = currentTimeInMinutes + 30;
 
-      const targetHour = targetTime.getHours();
-      const targetMinute = targetTime.getMinutes();
+      // Format waktu untuk logging
+      const currentTimeString =
+        notificationHandler.convertMinutesToTime(currentTimeInMinutes);
+      const targetTimeString =
+        notificationHandler.convertMinutesToTime(thirtyMinutesLater);
 
-      // Format waktu target untuk pencarian (HH:MM format)
-      const targetTimeString = `${String(targetHour).padStart(2, "0")}:${String(
-        targetMinute
-      ).padStart(2, "0")}`;
+      // Log untuk debugging waktu pencarian
+      console.log(
+        `[${now.toISOString()}] Waktu WIB sekarang: ${currentTimeString}`
+      );
+      console.log(
+        `[${now.toISOString()}] Mencari jadwal untuk hari ${today} yang dimulai antara ${currentTimeString} - ${targetTimeString} WIB`
+      );
 
-      // Cari jadwal yang akan dimulai dalam 30 menit
-      const upcomingSchedules = await scheduleCollection
+      // Ambil semua jadwal hari ini
+      const todaySchedules = await scheduleCollection
         .find({
           day: today,
-          startTime: targetTimeString,
+          isRecurring: true,
         })
         .toArray();
+
+      // Filter jadwal yang akan dimulai dalam 30 menit ke depan
+      const upcomingSchedules = todaySchedules.filter((schedule) => {
+        const scheduleTimeInMinutes = notificationHandler.convertTimeToMinutes(
+          schedule.startTime
+        );
+        // Jadwal yang dimulai dalam rentang waktu sekarang hingga 30 menit ke depan
+        return (
+          scheduleTimeInMinutes > currentTimeInMinutes &&
+          scheduleTimeInMinutes <= thirtyMinutesLater
+        );
+      });
+
+      // Log hasil pencarian
+      console.log(
+        `[${now.toISOString()}] Ditemukan ${
+          upcomingSchedules.length
+        } jadwal dalam rentang waktu tersebut`
+      );
+      if (upcomingSchedules.length > 0) {
+        console.log(
+          "Jadwal yang ditemukan:",
+          upcomingSchedules.map(
+            (s) =>
+              `${s.subject} (${s.startTime} WIB, ${Math.round(
+                notificationHandler.convertTimeToMinutes(s.startTime) -
+                  currentTimeInMinutes
+              )} menit lagi)`
+          )
+        );
+      }
 
       if (upcomingSchedules.length === 0) {
         return;
       }
 
-      // Log untuk debugging
-      console.log(
-        `[${new Date().toISOString()}] Checking schedules for ${today} at ${targetTimeString}`
-      );
-      console.log(`Found ${upcomingSchedules.length} upcoming schedules`);
-
       // Proses setiap jadwal yang akan dimulai
       for (const schedule of upcomingSchedules) {
-        // Format pesan notifikasi untuk anggota
+        // Cek apakah notifikasi sudah dikirim dalam 30 menit terakhir
+        const notificationKey = `${schedule._id}_${today}_${schedule.startTime}`;
+        const existingNotification = await notificationCollection.findOne({
+          notificationKey,
+          sentAt: { $gte: new Date(now.getTime() - 30 * 60 * 1000) },
+        });
+
+        if (existingNotification) {
+          console.log(
+            `[${now.toISOString()}] Notifikasi untuk ${
+              schedule.subject
+            } sudah dikirim dalam 30 menit terakhir, melewati.`
+          );
+          continue;
+        }
+
+        // Hitung berapa menit lagi jadwal akan dimulai
+        const scheduleTimeInMinutes = notificationHandler.convertTimeToMinutes(
+          schedule.startTime
+        );
+        const minutesUntilStart = scheduleTimeInMinutes - currentTimeInMinutes;
+
+        // Format pesan notifikasi dengan waktu yang lebih spesifik
         const message =
           `*⏰ Pengingat Jadwal Kuliah*\n\n` +
-          `Hai! Hari ini ada kelas *${schedule.subject}* loh. Jangan terlambat ya!\n\n` +
-          `*${today}*\n` +
+          `Hai! ${minutesUntilStart} menit lagi ada kelas *${schedule.subject}* loh. Jangan terlambat ya!\n\n` +
+          `*${today}, ${schedule.startTime} WIB*\n` +
           `${scheduleHandler.formatScheduleTime(schedule)}\n\n` +
-          `_Kelas akan dimulai dalam 30 menit_`;
+          `_Kelas akan dimulai dalam ${minutesUntilStart} menit_`;
 
         // Dapatkan semua pengguna yang aktif berlangganan
-        const notificationCollection = db.collection("notifications");
-        const subscribers = await notificationCollection
+        const subscriberCollection = db.collection("notifications");
+        const subscribers = await subscriberCollection
           .find({ isActive: true })
           .toArray();
 
@@ -218,24 +285,20 @@ const notificationHandler = {
 
         // Kirim notifikasi langsung ke semua subscriber
         let successCount = 0;
-        const batchSize = 5; // Jumlah pesan yang dikirim dalam satu batch
+        const batchSize = 5;
         const delayBetweenBatches = 3000;
 
         for (let i = 0; i < subscribers.length; i += batchSize) {
           const batch = subscribers.slice(i, i + batchSize);
 
-          // Kirim pesan ke batch saat ini
           const promises = batch.map(async (subscriber) => {
             try {
-              // Jangan kirim ke komting
-              if (subscriber.userId !== komtingId) {
-                const success = await notificationHandler.sendMessageWithRetry(
-                  sock,
-                  subscriber.userId,
-                  { text: message }
-                );
-                if (success) successCount++;
-              }
+              const success = await notificationHandler.sendMessageWithRetry(
+                sock,
+                subscriber.userId,
+                { text: message }
+              );
+              if (success) successCount++;
             } catch (error) {
               console.error(
                 `Error sending notification to ${subscriber.userId}:`,
@@ -246,7 +309,6 @@ const notificationHandler = {
 
           await Promise.all(promises);
 
-          // Jika masih ada batch selanjutnya, tunggu beberapa detik
           if (i + batchSize < subscribers.length) {
             await new Promise((resolve) =>
               setTimeout(resolve, delayBetweenBatches)
@@ -254,10 +316,18 @@ const notificationHandler = {
           }
         }
 
+        // Catat bahwa notifikasi telah dikirim
+        await notificationCollection.insertOne({
+          notificationKey,
+          scheduleId: schedule._id,
+          sentAt: now,
+          successCount,
+        });
+
         console.log(
-          `[${new Date().toISOString()}] Notifikasi jadwal ${
+          `[${now.toISOString()}] Notifikasi jadwal ${
             schedule.subject
-          } berhasil dikirim ke ${successCount} pengguna.`
+          } (${minutesUntilStart} menit lagi) berhasil dikirim ke ${successCount} pengguna.`
         );
       }
     } catch (error) {
@@ -265,120 +335,16 @@ const notificationHandler = {
     }
   },
 
-  // Menyetujui notifikasi jadwal
-  approveScheduleNotification: async (sock, sender, db, scheduleId) => {
-    try {
-      // Verifikasi bahwa yang menyetujui adalah komting
-      const komtingId = "628970401161@s.whatsapp.net";
-      const normalizedSender = sender.includes("@")
-        ? sender
-        : `${sender}@s.whatsapp.net`;
-
-      if (normalizedSender !== komtingId) {
-        await sock.sendMessage(sender, {
-          text: "❌ Maaf, hanya komting yang dapat menyetujui notifikasi.",
-        });
-        return;
-      }
-
-      // Cari notifikasi yang tertunda
-      const pendingNotificationsCollection = db.collection(
-        "pendingNotifications"
-      );
-      const pendingNotification = await pendingNotificationsCollection.findOne({
-        type: "schedule",
-        scheduleId: scheduleId,
-        approved: false,
-        sent: false,
-      });
-
-      if (!pendingNotification) {
-        await sock.sendMessage(sender, {
-          text: "❌ Notifikasi untuk jadwal ini tidak ditemukan atau sudah disetujui sebelumnya.",
-        });
-        return;
-      }
-
-      // Dapatkan semua pengguna yang aktif berlangganan
-      const notificationCollection = db.collection("notifications");
-      const subscribers = await notificationCollection
-        .find({ isActive: true })
-        .toArray();
-
-      if (subscribers.length === 0) {
-        await sock.sendMessage(sender, {
-          text: "❗ Tidak ada pengguna yang berlangganan notifikasi.",
-        });
-        return;
-      }
-
-      // Kirim pesan ke semua subscriber
-      let successCount = 0;
-      const batchSize = 5; // Jumlah pesan yang dikirim dalam satu batch
-      const delayBetweenBatches = 3000; // Delay 3 detik antar batch
-
-      for (let i = 0; i < subscribers.length; i += batchSize) {
-        const batch = subscribers.slice(i, i + batchSize);
-
-        // Kirim pesan ke batch saat ini
-        const promises = batch.map(async (subscriber) => {
-          try {
-            // Jangan kirim ke komting lagi
-            if (subscriber.userId !== komtingId) {
-              const success = await notificationHandler.sendMessageWithRetry(
-                sock,
-                subscriber.userId,
-                { text: pendingNotification.message }
-              );
-              if (success) successCount++;
-            }
-          } catch (error) {
-            console.error(
-              `Error sending notification to ${subscriber.userId}:`,
-              error
-            );
-          }
-        });
-
-        await Promise.all(promises);
-
-        // Jika masih ada batch selanjutnya, tunggu beberapa detik
-        if (i + batchSize < subscribers.length) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, delayBetweenBatches)
-          );
-        }
-      }
-
-      // Update status notifikasi di database
-      await pendingNotificationsCollection.updateOne(
-        { _id: pendingNotification._id },
-        { $set: { approved: true, sent: true, approvedAt: new Date() } }
-      );
-
-      await sock.sendMessage(sender, {
-        text: `✅ Notifikasi jadwal berhasil disetujui dan dikirim ke ${successCount} anggota kelas.`,
-      });
-
-      console.log(
-        `Notifikasi jadwal ${scheduleId} telah disetujui dan dikirim ke ${successCount} pengguna.`
-      );
-    } catch (error) {
-      console.error("Error approving schedule notification:", error);
-      await sock.sendMessage(sender, {
-        text: "❌ Terjadi kesalahan saat menyetujui notifikasi. Silakan coba lagi nanti.",
-      });
-    }
-  },
-
   // Fungsi untuk memulai jadwal pengecekan kelas
   startClassReminderScheduler: (sock, db) => {
-    // Jalankan pengecekan setiap 30 detik untuk memastikan tidak ada yang terlewat
+    // Jalankan pengecekan setiap 15 menit
     setInterval(() => {
       notificationHandler.sendClassReminder(sock, db);
-    }, 30 * 1000); // 30 detik
+    }, 15 * 60 * 1000); // 15 menit
 
-    console.log("Pengingat jadwal kuliah berhasil dimulai!");
+    console.log(
+      "Pengingat jadwal kuliah berhasil dimulai dengan interval 15 menit!"
+    );
   },
 
   // Fungsi untuk mengirim pesan WhatsApp dengan handling error dan retry

@@ -13,6 +13,7 @@ const dosenHandler = require("./handlers/dosenHandler");
 const notificationHandler = require("./handlers/notificationHandler");
 const gameHandler = require("./handlers/gameHandler");
 const fs = require("fs");
+const path = require("path");
 require("dotenv").config();
 
 // Bot control state
@@ -280,6 +281,127 @@ async function chatWithAI(message) {
     console.error("Error chatting with AI:", error);
     return "Maaf, terjadi kesalahan saat berkomunikasi dengan AI. Silakan coba lagi.";
   }
+}
+
+// Function to send audio file
+async function sendAudio(sock, sender, quotedMsg) {
+  try {
+    const path = require("path");
+    // Use absolute path from project root
+    const audioPath = path.resolve(
+      __dirname,
+      "assets",
+      "audio",
+      "jangantoxic_vn.ogg"
+    );
+
+    console.log("Attempting to send voice note");
+    console.log("Audio file path:", audioPath);
+
+    // Check if file exists
+    if (!fs.existsSync(audioPath)) {
+      console.error("Audio file not found at path:", audioPath);
+      return;
+    }
+
+    // Read file as buffer
+    const audioBuffer = fs.readFileSync(audioPath);
+    console.log(
+      "Successfully read audio file, size:",
+      audioBuffer.length,
+      "bytes"
+    );
+
+    // Send as voice note with proper format and quote the original message
+    await sock.sendMessage(
+      sender,
+      {
+        audio: audioBuffer,
+        mimetype: "audio/ogg; codecs=opus",
+        ptt: true,
+        duration: 30, // Add duration in seconds
+        waveform: new Array(30).fill(1), // Add waveform visualization
+      },
+      {
+        quoted: quotedMsg, // Quote the original toxic message
+      }
+    );
+
+    console.log("Voice note sent successfully as reply to:", sender);
+  } catch (error) {
+    console.error("Error sending voice note:", error);
+    if (error.stack) {
+      console.error("Error stack:", error.stack);
+    }
+  }
+}
+
+// Fungsi untuk membersihkan kata dari karakter yang diulang
+function cleanWord(word) {
+  // Hapus karakter yang diulang lebih dari 2 kali
+  return word.toLowerCase().replace(/(.)\1+/g, "$1$1");
+}
+
+// Fungsi untuk mengecek apakah pesan mengandung kata toxic
+function containsToxicWord(message) {
+  // Pisahkan pesan menjadi kata-kata
+  const words = message.toLowerCase().split(/\s+/);
+
+  // Cek setiap kata
+  return words.some((word) => {
+    // Bersihkan kata dari karakter yang diulang
+    const cleanedWord = cleanWord(word);
+
+    // Cek apakah kata yang sudah dibersihkan cocok dengan kata toxic
+    return toxicWords.some((toxic) => {
+      const cleanedToxic = cleanWord(toxic);
+      return (
+        cleanedWord === cleanedToxic || // Cocok persis
+        cleanedWord.includes(cleanedToxic) || // Bagian dari kata
+        // Tambahan untuk mendeteksi variasi penulisan
+        word.replace(/[aiueo]/g, "") === toxic.replace(/[aiueo]/g, "") || // Hapus vokal
+        cleanedWord.replace(/0/g, "o").replace(/1/g, "i") === cleanedToxic // Ganti angka
+      );
+    });
+  });
+}
+
+// Daftar kata-kata toxic
+const toxicWords = [
+  "anjing",
+  "anjeng",
+  "anjg",
+  "ajg",
+  "anj",
+  "babi",
+  "bangsat",
+  "bgst",
+  "kontol",
+  "kntl",
+  "memek",
+  "jancok",
+  "jembot",
+  "jembut",
+  "jnck",
+  "jancuk",
+  "asu",
+  "asw",
+  "goblok",
+  "gblk",
+  "tolol",
+  "bacot",
+  "bcot",
+  "kampang",
+  "kimak",
+];
+
+// Daftar audio respons untuk kata toxic
+const toxicResponses = ["sabar", "istighfar", "santuy"];
+
+// Function to get random audio response
+function getRandomToxicResponse() {
+  const index = Math.floor(Math.random() * toxicResponses.length);
+  return toxicResponses[index];
 }
 
 // Command handlers
@@ -744,6 +866,18 @@ const commands = {
       });
     }
   },
+
+  ".play": async (sock, sender, db, args) => {
+    if (!args || args.length === 0) {
+      await sock.sendMessage(sender, {
+        text: "❌ Format yang benar: .play [nama_audio]\n\nContoh: .play sabar",
+      });
+      return;
+    }
+
+    const audioName = args[0].toLowerCase();
+    await sendAudio(sock, sender, null);
+  },
 };
 
 // Convert all command keys to lowercase for case-insensitive matching
@@ -880,7 +1014,6 @@ async function startBot() {
       if (!msg.key.fromMe) {
         try {
           const sender = msg.key.remoteJid;
-          // Mendapatkan teks pesan dari berbagai jenis pesan WhatsApp
           const messageText =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
@@ -890,6 +1023,19 @@ async function startBot() {
 
           // Skip if message is empty or undefined
           if (!messageText) {
+            return;
+          }
+
+          // Check for toxic words and respond if bot is running
+          if (isBotRunning && containsToxicWord(messageText)) {
+            console.log("Toxic word detected in message:", messageText);
+            try {
+              // Pass the original message object to quote it in the reply
+              await sendAudio(sock, sender, msg);
+              console.log("Voice note response sent successfully");
+            } catch (error) {
+              console.error("Failed to send voice note response:", error);
+            }
             return;
           }
 
@@ -904,12 +1050,38 @@ async function startBot() {
           }
 
           // Handle sticker conversion for images with caption ".s"
-          if (
-            msg.message?.imageMessage &&
-            messageText.trim().toLowerCase() === ".s"
-          ) {
-            await convertToSticker(sock, msg, sender);
-            return;
+          if (messageText.trim().toLowerCase() === ".s") {
+            // Check if the message is a reply to an image
+            const quotedMessage =
+              msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const imageMessage =
+              msg.message?.imageMessage || quotedMessage?.imageMessage;
+
+            if (imageMessage) {
+              // Create a proper message object for download if it's a quoted message
+              const messageToDownload = quotedMessage
+                ? {
+                    key: {
+                      remoteJid: msg.key.remoteJid,
+                      fromMe:
+                        msg.message.extendedTextMessage.contextInfo
+                          .participant === sock.user.id,
+                      id: msg.message.extendedTextMessage.contextInfo.stanzaId,
+                    },
+                    message: {
+                      imageMessage: imageMessage,
+                    },
+                  }
+                : msg;
+
+              await convertToSticker(sock, messageToDownload, sender);
+              return;
+            } else {
+              await sock.sendMessage(sender, {
+                text: "❌ Silakan kirim gambar dengan caption .s atau reply gambar dengan pesan .s",
+              });
+              return;
+            }
           }
 
           // Handle sticker to image conversion with caption ".tojpg"
