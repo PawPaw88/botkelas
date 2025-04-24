@@ -294,7 +294,7 @@ async function sendAudio(sock, sender, quotedMsg) {
       __dirname,
       "assets",
       "audio",
-      "jangantoxic.ogg"
+      "jangantoxic_vn.ogg"
     );
 
     console.log("Attempting to send voice note");
