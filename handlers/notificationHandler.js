@@ -158,12 +158,14 @@ const notificationHandler = {
       const notificationCollection = db.collection("notifications_sent");
       const scheduleHandler = require("./scheduleHandler");
 
-      // Dapatkan waktu saat ini dan konversi ke WIB (UTC+7)
-      const utcNow = new Date();
-      const wibOffset = 7 * 60 * 60 * 1000;
-      const now = new Date(utcNow.getTime() + wibOffset);
+      // Get current time in WIB (UTC+7)
+      const now = new Date();
+      // Adjust to WIB timezone by getting the UTC time first
+      const utcHours = now.getUTCHours();
+      const wibHours = (utcHours + 7) % 24; // Convert to WIB hours
+      now.setUTCHours(utcHours); // Set back to UTC for consistency
 
-      // Dapatkan hari saat ini dalam WIB (0 = Minggu, 1 = Senin, dst)
+      // Get current day in WIB
       const dayNames = [
         "Minggu",
         "Senin",
@@ -173,31 +175,37 @@ const notificationHandler = {
         "Jumat",
         "Sabtu",
       ];
-      const today = dayNames[now.getUTCDay()];
 
-      // Hitung waktu saat ini dalam menit (sejak tengah malam)
-      const currentHour = now.getUTCHours();
+      // Adjust day if time conversion crosses midnight
+      let dayIndex = now.getUTCDay();
+      if (utcHours + 7 >= 24) {
+        dayIndex = (dayIndex + 1) % 7;
+      }
+      const today = dayNames[dayIndex];
+
+      // Calculate current time in minutes (since midnight WIB)
       const currentMinute = now.getUTCMinutes();
-      const currentTimeInMinutes = currentHour * 60 + currentMinute;
+      const currentTimeInMinutes = wibHours * 60 + currentMinute;
 
-      // Hitung waktu 30 menit dari sekarang dalam menit
+      // Calculate time 30 minutes from now
       const thirtyMinutesLater = currentTimeInMinutes + 30;
 
-      // Format waktu untuk logging
+      // Format times for logging
       const currentTimeString =
         notificationHandler.convertMinutesToTime(currentTimeInMinutes);
       const targetTimeString =
         notificationHandler.convertMinutesToTime(thirtyMinutesLater);
 
-      // Log untuk debugging waktu pencarian
+      console.log(`[${now.toISOString()}] System time check:`);
+      console.log(`UTC Hours: ${utcHours}`);
+      console.log(`WIB Hours: ${wibHours}`);
+      console.log(`Current day in WIB: ${today}`);
+      console.log(`Current time in WIB: ${currentTimeString}`);
       console.log(
-        `[${now.toISOString()}] Waktu WIB sekarang: ${currentTimeString}`
-      );
-      console.log(
-        `[${now.toISOString()}] Mencari jadwal untuk hari ${today} yang dimulai antara ${currentTimeString} - ${targetTimeString} WIB`
+        `Looking for classes between ${currentTimeString} - ${targetTimeString} WIB`
       );
 
-      // Ambil semua jadwal hari ini
+      // Get today's schedules
       const todaySchedules = await scheduleCollection
         .find({
           day: today,
@@ -205,44 +213,41 @@ const notificationHandler = {
         })
         .toArray();
 
-      // Filter jadwal yang akan dimulai dalam 30 menit ke depan
+      console.log(`Found ${todaySchedules.length} schedules for ${today}`);
+
+      // Filter upcoming schedules
       const upcomingSchedules = todaySchedules.filter((schedule) => {
         const scheduleTimeInMinutes = notificationHandler.convertTimeToMinutes(
           schedule.startTime
         );
-        // Jadwal yang dimulai dalam rentang waktu sekarang hingga 30 menit ke depan
+
+        // Handle edge case when checking near midnight
+        let adjustedScheduleTime = scheduleTimeInMinutes;
+        if (currentTimeInMinutes > 1380) {
+          // After 23:00 WIB
+          if (scheduleTimeInMinutes < 60) {
+            // Schedule is after midnight
+            adjustedScheduleTime += 1440; // Add 24 hours in minutes
+          }
+        }
+
         return (
-          scheduleTimeInMinutes > currentTimeInMinutes &&
-          scheduleTimeInMinutes <= thirtyMinutesLater
+          adjustedScheduleTime > currentTimeInMinutes &&
+          adjustedScheduleTime <= thirtyMinutesLater
         );
       });
 
-      // Log hasil pencarian
       console.log(
-        `[${now.toISOString()}] Ditemukan ${
-          upcomingSchedules.length
-        } jadwal dalam rentang waktu tersebut`
+        `Found ${upcomingSchedules.length} upcoming schedules in the next 30 minutes`
       );
-      if (upcomingSchedules.length > 0) {
-        console.log(
-          "Jadwal yang ditemukan:",
-          upcomingSchedules.map(
-            (s) =>
-              `${s.subject} (${s.startTime} WIB, ${Math.round(
-                notificationHandler.convertTimeToMinutes(s.startTime) -
-                  currentTimeInMinutes
-              )} menit lagi)`
-          )
-        );
-      }
 
       if (upcomingSchedules.length === 0) {
         return;
       }
 
-      // Proses setiap jadwal yang akan dimulai
+      // Process each upcoming schedule
       for (const schedule of upcomingSchedules) {
-        // Cek apakah notifikasi sudah dikirim dalam 30 menit terakhir
+        // Check if notification was already sent in the last 30 minutes
         const notificationKey = `${schedule._id}_${today}_${schedule.startTime}`;
         const existingNotification = await notificationCollection.findOne({
           notificationKey,
@@ -251,42 +256,52 @@ const notificationHandler = {
 
         if (existingNotification) {
           console.log(
-            `[${now.toISOString()}] Notifikasi untuk ${
-              schedule.subject
-            } sudah dikirim dalam 30 menit terakhir, melewati.`
+            `Notification for ${schedule.subject} already sent in the last 30 minutes, skipping.`
           );
           continue;
         }
 
-        // Hitung berapa menit lagi jadwal akan dimulai
+        // Calculate minutes until class starts
         const scheduleTimeInMinutes = notificationHandler.convertTimeToMinutes(
           schedule.startTime
         );
-        const minutesUntilStart = scheduleTimeInMinutes - currentTimeInMinutes;
+        let minutesUntilStart = scheduleTimeInMinutes - currentTimeInMinutes;
 
-        // Format pesan notifikasi dengan waktu yang lebih spesifik
+        // Adjust if schedule is after midnight
+        if (minutesUntilStart < -1380) {
+          // More than 23 hours negative
+          minutesUntilStart += 1440; // Add 24 hours in minutes
+        }
+
+        // Format notification message
         const message =
           `*⏰ Pengingat Jadwal Kuliah*\n\n` +
-          `Hai! ${minutesUntilStart} menit lagi ada kelas *${schedule.subject}* loh. Jangan terlambat ya!\n\n` +
-          `*${today}, ${schedule.startTime} WIB*\n` +
-          `${scheduleHandler.formatScheduleTime(schedule)}\n\n` +
+          `Hai! ${minutesUntilStart} menit lagi ada kelas:\n\n` +
+          `📚 *${schedule.subject}*\n` +
+          `👨‍🏫 ${schedule.lecturer}\n` +
+          `📍 ${schedule.location}\n` +
+          `🕒 ${schedule.startTime} WIB\n\n` +
           `_Kelas akan dimulai dalam ${minutesUntilStart} menit_`;
 
-        // Dapatkan semua pengguna yang aktif berlangganan
+        // Get active subscribers
         const subscriberCollection = db.collection("notifications");
         const subscribers = await subscriberCollection
           .find({ isActive: true })
           .toArray();
 
         if (subscribers.length === 0) {
-          console.log("Tidak ada pengguna yang berlangganan notifikasi.");
+          console.log("No active subscribers found.");
           continue;
         }
 
-        // Kirim notifikasi langsung ke semua subscriber
+        console.log(
+          `Sending notifications to ${subscribers.length} subscribers`
+        );
+
+        // Send notifications in batches
         let successCount = 0;
         const batchSize = 5;
-        const delayBetweenBatches = 3000;
+        const delayBetweenBatches = 1000; // 1 second
 
         for (let i = 0; i < subscribers.length; i += batchSize) {
           const batch = subscribers.slice(i, i + batchSize);
@@ -316,7 +331,7 @@ const notificationHandler = {
           }
         }
 
-        // Catat bahwa notifikasi telah dikirim
+        // Record that notification was sent
         await notificationCollection.insertOne({
           notificationKey,
           scheduleId: schedule._id,
@@ -325,9 +340,7 @@ const notificationHandler = {
         });
 
         console.log(
-          `[${now.toISOString()}] Notifikasi jadwal ${
-            schedule.subject
-          } (${minutesUntilStart} menit lagi) berhasil dikirim ke ${successCount} pengguna.`
+          `Successfully sent notifications for ${schedule.subject} to ${successCount} subscribers`
         );
       }
     } catch (error) {
@@ -337,13 +350,25 @@ const notificationHandler = {
 
   // Fungsi untuk memulai jadwal pengecekan kelas
   startClassReminderScheduler: (sock, db) => {
-    // Jalankan pengecekan setiap 15 menit
-    setInterval(() => {
+    console.log("Memulai pengingat jadwal kuliah...");
+
+    // Jalankan pengecekan pertama segera setelah bot dimulai
+    notificationHandler.sendClassReminder(sock, db);
+
+    // Jalankan pengecekan setiap 5 menit
+    const interval = setInterval(() => {
+      if (!global.isBotRunning) {
+        console.log("Bot sedang tidak aktif, melewati pengecekan jadwal...");
+        return;
+      }
       notificationHandler.sendClassReminder(sock, db);
-    }, 15 * 60 * 1000); // 15 menit
+    }, 5 * 60 * 1000); // 5 menit
+
+    // Simpan interval di variabel global agar bisa dihentikan jika perlu
+    global.classReminderInterval = interval;
 
     console.log(
-      "Pengingat jadwal kuliah berhasil dimulai dengan interval 15 menit!"
+      "Pengingat jadwal kuliah berhasil dimulai dengan interval 5 menit!"
     );
   },
 

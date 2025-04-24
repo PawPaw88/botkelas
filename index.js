@@ -14,10 +14,12 @@ const notificationHandler = require("./handlers/notificationHandler");
 const gameHandler = require("./handlers/gameHandler");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 require("dotenv").config();
 
 // Bot control state
 let isBotRunning = true;
+global.isBotRunning = isBotRunning;
 
 // Admin number
 const ADMIN_NUMBER = "6289670401161@s.whatsapp.net";
@@ -292,7 +294,7 @@ async function sendAudio(sock, sender, quotedMsg) {
       __dirname,
       "assets",
       "audio",
-      "jangantoxic_vn.ogg"
+      "jangantoxic.ogg"
     );
 
     console.log("Attempting to send voice note");
@@ -368,22 +370,31 @@ function containsToxicWord(message) {
 
 // Daftar kata-kata toxic
 const toxicWords = [
+  "anjing",
   "anjeng",
+  "anjg",
+  "ajg",
+  "anj",
   "babi",
   "bangsat",
+  "bgst",
   "kontol",
+  "kntl",
   "memek",
   "jancok",
   "jembot",
   "jembut",
+  "jnck",
+  "jancuk",
+  "asu",
+  "asw",
   "goblok",
+  "gblk",
   "tolol",
+  "bacot",
+  "bcot",
   "kampang",
   "kimak",
-  "silet",
-  "ngentod",
-  "pantek",
-  "bajingan",
 ];
 
 // Daftar audio respons untuk kata toxic
@@ -413,6 +424,13 @@ const commands = {
     }
 
     isBotRunning = true;
+    global.isBotRunning = true;
+
+    // Restart notification scheduler
+    if (sock.db) {
+      notificationHandler.startClassReminderScheduler(sock, sock.db);
+    }
+
     await sock.sendMessage(sender, {
       text: "✅ Bot berhasil diaktifkan!",
     });
@@ -434,25 +452,64 @@ const commands = {
     }
 
     isBotRunning = false;
+    global.isBotRunning = false;
+
+    // Clear notification scheduler if it exists
+    if (global.classReminderInterval) {
+      clearInterval(global.classReminderInterval);
+      global.classReminderInterval = null;
+    }
+
     await sock.sendMessage(sender, {
       text: "✅ Bot berhasil dihentikan!",
     });
   },
 
   ".menu": async (sock, sender) => {
-    const helpText =
-      `*Halo! Saya bot untuk membantu koordinasi kelas DB. Ketik .menu untuk melihat perintah yang tersedia ya*\n\n` +
-      `*Perintah yang tersedia:*\n` +
-      `.jadwal - Melihat jadwal kelas DB\n` +
-      `.tugas - Melihat daftar tugas\n` +
-      `.dosen - Melihat kontak dosen\n\n` +
-      `*Perintah tambahan:*\n` +
-      `.notifon - Mengaktifkan notifikasi tugas baru dan pengingat jadwal kuliah\n` +
-      `.notifoff - Menonaktifkan notifikasi\n\n` +
-      `Kamu bisa gunakan bot ini di pesan pribadi`;
-    // jangan tambahkan menu lagi disini
+    try {
+      const helpText =
+        `*Halo! Saya bot untuk membantu koordinasi kelas DB. Ketik .menu untuk melihat perintah yang tersedia ya*\n\n` +
+        `*Perintah yang tersedia:*\n` +
+        `.jadwal - Melihat jadwal kelas DB\n` +
+        `.tugas - Melihat daftar tugas\n` +
+        `.dosen - Melihat kontak dosen\n\n` +
+        `*Perintah tambahan:*\n` +
+        `.notifon - Mengaktifkan notifikasi tugas baru dan pengingat jadwal kuliah\n` +
+        `.notifoff - Menonaktifkan notifikasi\n\n` +
+        `Kamu bisa gunakan bot ini di pesan pribadi`;
 
-    await sock.sendMessage(sender, { text: helpText });
+      await sock.sendMessage(sender, {
+        text: helpText,
+        contextInfo: {
+          externalAdReply: {
+            title: "Menu Bot DB",
+            body: "Mas Kentung mas kentung ...",
+            thumbnailUrl:
+              "https://appetiser-dev-space.sgp1.digitaloceanspaces.com/d8074db0ae90d9e53fa56bb9.jpg",
+            sourceUrl:
+              "https://appetiser-dev-space.sgp1.digitaloceanspaces.com/d8074db0ae90d9e53fa56bb9.jpg",
+            mediaType: 1,
+            showAdAttribution: false,
+            renderLargerThumbnail: true,
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Error sending menu:", error);
+      // Fallback to text-only menu if image fails
+      const helpText =
+        `*Halo! Saya bot untuk membantu koordinasi kelas DB. Ketik .menu untuk melihat perintah yang tersedia ya*\n\n` +
+        `*Perintah yang tersedia:*\n` +
+        `.jadwal - Melihat jadwal kelas DB\n` +
+        `.tugas - Melihat daftar tugas\n` +
+        `.dosen - Melihat kontak dosen\n\n` +
+        `*Perintah tambahan:*\n` +
+        `.notifon - Mengaktifkan notifikasi tugas baru dan pengingat jadwal kuliah\n` +
+        `.notifoff - Menonaktifkan notifikasi\n\n` +
+        `Kamu bisa gunakan bot ini di pesan pribadi`;
+
+      await sock.sendMessage(sender, { text: helpText });
+    }
   },
 
   ".menufun": async (sock, sender) => {
@@ -977,7 +1034,10 @@ async function startBot() {
         }
       } else if (connection === "open") {
         console.log("Bot berhasil terhubung!");
-        notificationHandler.startClassReminderScheduler(sock, db);
+        // Start notification scheduler only if bot is running
+        if (isBotRunning) {
+          notificationHandler.startClassReminderScheduler(sock, db);
+        }
       }
     });
 
@@ -1015,79 +1075,6 @@ async function startBot() {
           // Skip if message is empty or undefined
           if (!messageText) {
             return;
-          }
-
-          // Check for toxic words and respond if bot is running
-          if (isBotRunning && containsToxicWord(messageText)) {
-            console.log("Toxic word detected in message:", messageText);
-            try {
-              // Pass the original message object to quote it in the reply
-              await sendAudio(sock, sender, msg);
-              console.log("Voice note response sent successfully");
-            } catch (error) {
-              console.error("Failed to send voice note response:", error);
-            }
-            return;
-          }
-
-          // Handle AI chat with "/" prefix
-          if (messageText.startsWith("/")) {
-            const aiMessage = messageText.substring(1).trim();
-            if (aiMessage) {
-              const aiResponse = await chatWithAI(aiMessage);
-              await sock.sendMessage(sender, { text: aiResponse });
-              return;
-            }
-          }
-
-          // Handle sticker conversion for images with caption ".s"
-          if (messageText.trim().toLowerCase() === ".s") {
-            // Check if the message is a reply to an image
-            const quotedMessage =
-              msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            const imageMessage =
-              msg.message?.imageMessage || quotedMessage?.imageMessage;
-
-            if (imageMessage) {
-              // Create a proper message object for download if it's a quoted message
-              const messageToDownload = quotedMessage
-                ? {
-                    key: {
-                      remoteJid: msg.key.remoteJid,
-                      fromMe:
-                        msg.message.extendedTextMessage.contextInfo
-                          .participant === sock.user.id,
-                      id: msg.message.extendedTextMessage.contextInfo.stanzaId,
-                    },
-                    message: {
-                      imageMessage: imageMessage,
-                    },
-                  }
-                : msg;
-
-              await convertToSticker(sock, messageToDownload, sender);
-              return;
-            } else {
-              await sock.sendMessage(sender, {
-                text: "❌ Silakan kirim gambar dengan caption .s atau reply gambar dengan pesan .s",
-              });
-              return;
-            }
-          }
-
-          // Handle sticker to image conversion with caption ".tojpg"
-          if (messageText.trim().toLowerCase() === ".tojpg") {
-            // Check if the message is a reply to a sticker
-            const isQuotedSticker =
-              msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
-                ?.stickerMessage;
-            // Check if the message itself is a sticker
-            const isDirectSticker = msg.message?.stickerMessage;
-
-            if (isQuotedSticker || isDirectSticker) {
-              await commands[".tojpg"](sock, msg, sender);
-              return;
-            }
           }
 
           // Mendapatkan ID pengirim jika dalam grup
@@ -1140,7 +1127,7 @@ async function startBot() {
 
               // Check if bot is running for other commands
               if (!isBotRunning) {
-                return; // Langsung return tanpa mengirim pesan
+                return; // Bot is stopped, don't respond to any commands
               }
 
               // Cek apakah ini adalah perintah yang berkaitan dengan tugas
@@ -1161,9 +1148,83 @@ async function startBot() {
               }
             }
           } else {
-            // Jika bot sedang tidak aktif, abaikan semua pesan
+            // If bot is stopped, don't process any non-command messages
             if (!isBotRunning) {
               return;
+            }
+
+            // Check for toxic words and respond if bot is running
+            if (containsToxicWord(messageText)) {
+              console.log("Toxic word detected in message:", messageText);
+              try {
+                // Pass the original message object to quote it in the reply
+                await sendAudio(sock, sender, msg);
+                console.log("Voice note response sent successfully");
+              } catch (error) {
+                console.error("Failed to send voice note response:", error);
+              }
+              return;
+            }
+
+            // Handle AI chat with "/" prefix
+            if (messageText.startsWith("/")) {
+              const aiMessage = messageText.substring(1).trim();
+              if (aiMessage) {
+                const aiResponse = await chatWithAI(aiMessage);
+                await sock.sendMessage(sender, { text: aiResponse });
+                return;
+              }
+            }
+
+            // Handle sticker conversion for images with caption ".s"
+            if (messageText.trim().toLowerCase() === ".s") {
+              // Check if the message is a reply to an image
+              const quotedMessage =
+                msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+              const imageMessage =
+                msg.message?.imageMessage || quotedMessage?.imageMessage;
+
+              if (imageMessage) {
+                // Create a proper message object for download if it's a quoted message
+                const messageToDownload = quotedMessage
+                  ? {
+                      key: {
+                        remoteJid: msg.key.remoteJid,
+                        fromMe:
+                          msg.message.extendedTextMessage.contextInfo
+                            .participant === sock.user.id,
+                        id: msg.message.extendedTextMessage.contextInfo
+                          .stanzaId,
+                      },
+                      message: {
+                        imageMessage: imageMessage,
+                      },
+                    }
+                  : msg;
+
+                await convertToSticker(sock, messageToDownload, sender);
+                return;
+              } else {
+                await sock.sendMessage(sender, {
+                  text: "❌ Silakan kirim gambar dengan caption .s atau reply gambar dengan pesan .s",
+                });
+                return;
+              }
+            }
+
+            // Handle sticker to image conversion with caption ".tojpg"
+            if (messageText.trim().toLowerCase() === ".tojpg") {
+              // Check if the message is a reply to a sticker
+              const isQuotedSticker =
+                msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+                  ?.stickerMessage;
+              // Check if the message itself is a sticker
+              const isDirectSticker = msg.message?.stickerMessage;
+
+              if (isQuotedSticker || isDirectSticker) {
+                await commands[".tojpg"](sock, msg, sender);
+                return;
+              }
             }
 
             // Cek apakah ada game Family 100 yang aktif di grup ini
