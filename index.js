@@ -15,6 +15,7 @@ const gameHandler = require("./handlers/gameHandler");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
+const toxicHandler = require("./handlers/toxicHandler");
 require("dotenv").config();
 
 // Bot control state
@@ -183,80 +184,6 @@ async function convertStickerToImage(sock, msg, sender) {
   }
 }
 
-// Function to check answer using AI
-async function checkAnswerWithAI(question, userAnswer, correctAnswers) {
-  try {
-    const prompt = `Kamu adalah asisten dalam permainan Family 100 yang gaul dan lucu.
-
-    - Pertanyaan: "${question}"
-    - Daftar jawaban yang benar: ${correctAnswers.join(", ")}
-    - Jawaban pemain: "${userAnswer}"
-    
-    Jika jawaban pemain ada di daftar jawaban yang benar / memiliki makna yang sama, benarkan jawaban pemain dan berikan output:
-    "BENAR: jawaban" jawaban harus ada dan persis di daftar jawaban
-
-    contoh:
-    - Jawaban pemain: "mi gorng"
-    - Daftar jawaban yang benar: "nasi goreng, mie goreng, ..."
-    - Output: "BENAR: mie goreng"
-
-    jika jawabannya tidak ada, berikan respon yang lucu dan gaul tanpa mengulangi teks ini. jangan spoiler jawaban yang benar.`;
-
-    const response = await fetch(
-      `https://api.ryzendesu.vip/api/ai/deepseek?text=${encodeURIComponent(
-        prompt
-      )}`,
-      {
-        timeout: 60000,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (data.status && data.answer) {
-      // Check if the answer starts with "BENAR:"
-      if (data.answer.startsWith("BENAR:")) {
-        // Extract the correct answer
-        const correctAnswer = data.answer.split(":")[1].trim();
-        return {
-          isCorrect: true,
-          correctAnswer: correctAnswer,
-          message: "🎉 Benar! Kamu mendapatkan 1 poin!",
-        };
-      } else {
-        // Return the AI's response for wrong answers
-        return {
-          isCorrect: false,
-          correctAnswer: null,
-          message: data.answer,
-        };
-      }
-    }
-
-    return {
-      isCorrect: false,
-      correctAnswer: null,
-      message: "Hmm... jawabanmu kurang tepat. Coba lagi ya! 😊",
-    };
-  } catch (error) {
-    console.error("Error checking answer with AI:", error);
-    return {
-      isCorrect: false,
-      correctAnswer: null,
-      message:
-        "Maaf, terjadi kesalahan saat memeriksa jawaban. Silakan coba lagi.",
-    };
-  }
-}
-
 // Function to chat with AI
 async function chatWithAI(message) {
   try {
@@ -341,7 +268,7 @@ async function sendAudio(sock, sender, quotedMsg) {
 // Fungsi untuk membersihkan kata dari karakter yang diulang
 function cleanWord(word) {
   // Hapus karakter yang diulang lebih dari 2 kali
-  return word.toLowerCase().replace(/(.)\1+/g, "$1$1");
+  return word.toLowerCase().replace(/(.)\1{2,}/g, "$1$1");
 }
 
 // Fungsi untuk mengecek apakah pesan mengandung kata toxic
@@ -357,13 +284,30 @@ function containsToxicWord(message) {
     // Cek apakah kata yang sudah dibersihkan cocok dengan kata toxic
     return toxicWords.some((toxic) => {
       const cleanedToxic = cleanWord(toxic);
-      return (
-        cleanedWord === cleanedToxic || // Cocok persis
-        cleanedWord.includes(cleanedToxic) || // Bagian dari kata
-        // Tambahan untuk mendeteksi variasi penulisan
-        word.replace(/[aiueo]/g, "") === toxic.replace(/[aiueo]/g, "") || // Hapus vokal
-        cleanedWord.replace(/0/g, "o").replace(/1/g, "i") === cleanedToxic // Ganti angka
-      );
+
+      // Cek kecocokan dengan batasan kata
+      const wordBoundary = new RegExp(`\\b${cleanedToxic}\\b`, "i");
+      if (wordBoundary.test(cleanedWord)) {
+        return true;
+      }
+
+      // Cek variasi penulisan dengan batasan kata
+      const noVowelsWord = cleanedWord.replace(/[aiueo]/g, "");
+      const noVowelsToxic = cleanedToxic.replace(/[aiueo]/g, "");
+      if (noVowelsWord === noVowelsToxic && noVowelsWord.length > 2) {
+        return true;
+      }
+
+      // Cek penggantian angka dengan batasan kata
+      const normalizedWord = cleanedWord.replace(/0/g, "o").replace(/1/g, "i");
+      const normalizedToxic = cleanedToxic
+        .replace(/0/g, "o")
+        .replace(/1/g, "i");
+      if (normalizedWord === normalizedToxic && normalizedWord.length > 2) {
+        return true;
+      }
+
+      return false;
     });
   });
 }
@@ -372,39 +316,21 @@ function containsToxicWord(message) {
 const toxicWords = [
   "anjing",
   "anjeng",
-  "anjg",
-  "ajg",
-  "anj",
   "babi",
   "bangsat",
-  "bgst",
   "kontol",
-  "kntl",
   "memek",
   "jancok",
+  "jancuk",
   "jembot",
   "jembut",
-  "jnck",
-  "jancuk",
-  "asu",
-  "asw",
   "goblok",
-  "gblk",
   "tolol",
-  "bacot",
-  "bcot",
-  "kampang",
   "kimak",
+  "peler",
+  "itil",
+  "silet",
 ];
-
-// Daftar audio respons untuk kata toxic
-const toxicResponses = ["sabar", "istighfar", "santuy"];
-
-// Function to get random audio response
-function getRandomToxicResponse() {
-  const index = Math.floor(Math.random() * toxicResponses.length);
-  return toxicResponses[index];
-}
 
 // Command handlers
 const commands = {
@@ -425,11 +351,6 @@ const commands = {
 
     isBotRunning = true;
     global.isBotRunning = true;
-
-    // Restart notification scheduler
-    if (sock.db) {
-      notificationHandler.startClassReminderScheduler(sock, sock.db);
-    }
 
     await sock.sendMessage(sender, {
       text: "✅ Bot berhasil diaktifkan!",
@@ -453,12 +374,6 @@ const commands = {
 
     isBotRunning = false;
     global.isBotRunning = false;
-
-    // Clear notification scheduler if it exists
-    if (global.classReminderInterval) {
-      clearInterval(global.classReminderInterval);
-      global.classReminderInterval = null;
-    }
 
     await sock.sendMessage(sender, {
       text: "✅ Bot berhasil dihentikan!",
@@ -841,7 +756,7 @@ const commands = {
       return;
     }
 
-    await gameHandler.endFamily100(sock, sender, sender);
+    await gameHandler.endFamily100(sock, sender, sender, db);
     await gameHandler.showScores(sock, sender);
   },
 
@@ -915,16 +830,8 @@ const commands = {
     }
   },
 
-  ".play": async (sock, sender, db, args) => {
-    if (!args || args.length === 0) {
-      await sock.sendMessage(sender, {
-        text: "❌ Format yang benar: .play [nama_audio]\n\nContoh: .play sabar",
-      });
-      return;
-    }
-
-    const audioName = args[0].toLowerCase();
-    await sendAudio(sock, sender, null);
+  ".stats": async (sock, sender, db) => {
+    await gameHandler.showStats(sock, sender, db);
   },
 };
 
@@ -1034,10 +941,6 @@ async function startBot() {
         }
       } else if (connection === "open") {
         console.log("Bot berhasil terhubung!");
-        // Start notification scheduler only if bot is running
-        if (isBotRunning) {
-          notificationHandler.startClassReminderScheduler(sock, db);
-        }
       }
     });
 
@@ -1074,6 +977,34 @@ async function startBot() {
 
           // Skip if message is empty or undefined
           if (!messageText) {
+            return;
+          }
+
+          // Check for toxic words using the imported function
+          if (toxicHandler.containsToxicWord(messageText)) {
+            console.log("Toxic word detected in message:", messageText);
+            try {
+              // Get the toxic word
+              const toxicWord = toxicHandler.getToxicWord(messageText);
+              if (toxicWord) {
+                // Normalize sender ID for toxic stats
+                const normalizedSenderID = msg.key.participant
+                  ? normalizeUserID(msg.key.participant)
+                  : normalizeUserID(sender);
+
+                // Save toxic word count to database with normalized ID
+                await toxicHandler.saveToxicWordCount(
+                  db,
+                  normalizedSenderID,
+                  toxicWord
+                );
+              }
+              // Pass the original message object to quote it in the reply
+              await sendAudio(sock, sender, msg);
+              console.log("Voice note response sent successfully");
+            } catch (error) {
+              console.error("Failed to send voice note response:", error);
+            }
             return;
           }
 
@@ -1153,19 +1084,6 @@ async function startBot() {
               return;
             }
 
-            // Check for toxic words and respond if bot is running
-            if (containsToxicWord(messageText)) {
-              console.log("Toxic word detected in message:", messageText);
-              try {
-                // Pass the original message object to quote it in the reply
-                await sendAudio(sock, sender, msg);
-                console.log("Voice note response sent successfully");
-              } catch (error) {
-                console.error("Failed to send voice note response:", error);
-              }
-              return;
-            }
-
             // Handle AI chat with "/" prefix
             if (messageText.startsWith("/")) {
               const aiMessage = messageText.substring(1).trim();
@@ -1234,7 +1152,8 @@ async function startBot() {
                 sock,
                 normalizedSenderID,
                 sender,
-                messageText
+                messageText,
+                db
               );
               return;
             }
