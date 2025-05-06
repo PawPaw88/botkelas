@@ -309,22 +309,28 @@ const gameHandler = {
       let endMessage = `@${
         sender.split("@")[0]
       } kamu menyerah ...\n\n🎯 *Daftar Jawaban:*\n\n`;
-      let answerNumber = 1;
 
-      // Tambahkan jawaban yang sudah diberikan
-      for (const [answer, player] of gameState.answers) {
-        const points = gameState.points[answer] || 0;
-        const playerName = player.split("@")[0];
-        endMessage += `${answerNumber}. ${answer} - ${points} @${playerName}\n`;
-        answerNumber++;
-      }
+      // Get all possible answers with their points
+      const allAnswers = gameState.correctAnswers.map((answer) => ({
+        answer,
+        points: gameState.points[answer] || 0,
+        player: gameState.answers.get(answer) || null,
+      }));
 
-      // Tambahkan nomor untuk jawaban yang belum terjawab
-      const remainingAnswers =
-        gameState.correctAnswers.length - gameState.answers.size;
-      for (let i = 0; i < remainingAnswers; i++) {
-        endMessage += `${answerNumber + i}. ...........\n`;
-      }
+      // Sort by points in descending order
+      allAnswers.sort((a, b) => b.points - a.points);
+
+      // Display answers maintaining their original order
+      allAnswers.forEach((item, index) => {
+        if (item.player) {
+          const playerName = item.player.split("@")[0];
+          endMessage += `${index + 1}. ${item.answer} - ${
+            item.points
+          } @${playerName}\n`;
+        } else {
+          endMessage += `${index + 1}. ...........\n`;
+        }
+      });
 
       // Kirim pesan akhir
       await sock.sendMessage(groupId, {
@@ -363,6 +369,20 @@ const gameHandler = {
       );
 
       if (aiCheck.isCorrect) {
+        // Cek apakah jawaban sudah pernah dijawab
+        if (gameState.answers.has(aiCheck.correctAnswer)) {
+          const previousAnswerer = gameState.answers.get(aiCheck.correctAnswer);
+          const previousAnswererName = previousAnswerer.split("@")[0];
+
+          await sock.sendMessage(groupId, {
+            text: `@${sender.split("@")[0]} jawaban "${
+              aiCheck.correctAnswer
+            }" sudah dijawab oleh @${previousAnswererName}. Silakan coba jawaban lain!`,
+            mentions: [sender, previousAnswerer],
+          });
+          return;
+        }
+
         // Add score and track answer
         const points = gameState.points[aiCheck.correctAnswer] || 0;
         gameState.scores.set(
@@ -373,22 +393,28 @@ const gameHandler = {
 
         // Format pesan jawaban yang sudah diberikan
         let answeredMessage = `🎯 *Daftar Jawaban:*\n\n`;
-        let answerNumber = 1;
 
-        // Tambahkan jawaban yang sudah diberikan
-        for (const [ans, player] of gameState.answers) {
-          const ansPoints = gameState.points[ans] || 0;
-          const playerName = player.split("@")[0];
-          answeredMessage += `${answerNumber}. ${ans} - ${ansPoints} @${playerName}\n`;
-          answerNumber++;
-        }
+        // Get all possible answers with their points
+        const allAnswers = gameState.correctAnswers.map((answer) => ({
+          answer,
+          points: gameState.points[answer] || 0,
+          player: gameState.answers.get(answer) || null,
+        }));
 
-        // Tambahkan placeholder untuk jawaban yang belum terjawab
-        const remainingAnswers =
-          gameState.correctAnswers.length - gameState.answers.size;
-        for (let i = 0; i < remainingAnswers; i++) {
-          answeredMessage += `${answerNumber + i}. ...........\n`;
-        }
+        // Sort by points in descending order
+        allAnswers.sort((a, b) => b.points - a.points);
+
+        // Display answers maintaining their original order
+        allAnswers.forEach((item, index) => {
+          if (item.player) {
+            const playerName = item.player.split("@")[0];
+            answeredMessage += `${index + 1}. ${item.answer} - ${
+              item.points
+            } @${playerName}\n`;
+          } else {
+            answeredMessage += `${index + 1}. ...........\n`;
+          }
+        });
 
         // Kirim pesan konfirmasi
         await sock.sendMessage(groupId, {
@@ -400,15 +426,14 @@ const gameHandler = {
         if (gameState.answers.size === gameState.correctAnswers.length) {
           // Format pesan akhir dengan semua jawaban
           let endMessage = `🎉 *Selamat! Semua jawaban sudah terjawab!*\n\n🎯 *Daftar Jawaban Lengkap:*\n\n`;
-          let finalAnswerNumber = 1;
 
-          // Tambahkan semua jawaban yang sudah diberikan
-          for (const [ans, player] of gameState.answers) {
-            const ansPoints = gameState.points[ans] || 0;
-            const playerName = player.split("@")[0];
-            endMessage += `${finalAnswerNumber}. ${ans} - ${ansPoints} @${playerName}\n`;
-            finalAnswerNumber++;
-          }
+          // Display final answers in the same order
+          allAnswers.forEach((item, index) => {
+            const playerName = item.player.split("@")[0];
+            endMessage += `${index + 1}. ${item.answer} - ${
+              item.points
+            } @${playerName}\n`;
+          });
 
           // Tambahkan skor akhir
           endMessage += `\n🏆 *Skor Akhir:*\n`;

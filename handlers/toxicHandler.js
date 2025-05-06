@@ -18,8 +18,8 @@ function containsToxicWord(message) {
     return toxicWords.some((toxic) => {
       const cleanedToxic = cleanWord(toxic);
 
-      // Cek kecocokan dengan batasan kata
-      const wordBoundary = new RegExp(`\\b${cleanedToxic}\\b`, "i");
+      // Cek kecocokan dengan batasan kata yang lebih longgar
+      const wordBoundary = new RegExp(`${cleanedToxic}`, "i");
       if (wordBoundary.test(cleanedWord)) {
         return true;
       }
@@ -37,6 +37,14 @@ function containsToxicWord(message) {
         .replace(/0/g, "o")
         .replace(/1/g, "i");
       if (normalizedWord === normalizedToxic && normalizedWord.length > 2) {
+        return true;
+      }
+
+      // Cek fuzzy matching untuk kata yang mirip
+      if (
+        cleanedWord.includes(cleanedToxic) ||
+        cleanedToxic.includes(cleanedWord)
+      ) {
         return true;
       }
 
@@ -59,8 +67,8 @@ function getToxicWord(message) {
     for (const toxic of toxicWords) {
       const cleanedToxic = cleanWord(toxic);
 
-      // Cek kecocokan dengan batasan kata
-      const wordBoundary = new RegExp(`\\b${cleanedToxic}\\b`, "i");
+      // Cek kecocokan dengan batasan kata yang lebih longgar
+      const wordBoundary = new RegExp(`${cleanedToxic}`, "i");
       if (wordBoundary.test(cleanedWord)) {
         return toxic;
       }
@@ -78,6 +86,14 @@ function getToxicWord(message) {
         .replace(/0/g, "o")
         .replace(/1/g, "i");
       if (normalizedWord === normalizedToxic && normalizedWord.length > 2) {
+        return toxic;
+      }
+
+      // Cek fuzzy matching untuk kata yang mirip
+      if (
+        cleanedWord.includes(cleanedToxic) ||
+        cleanedToxic.includes(cleanedWord)
+      ) {
         return toxic;
       }
     }
@@ -158,14 +174,11 @@ async function getTopToxicPlayers(db, limit = 10) {
 
 // Daftar kata-kata toxic
 const toxicWords = [
-  "anjing",
   "anjeng",
-  "babi",
   "bangsat",
   "kontol",
   "memek",
   "jancok",
-  "jancuk",
   "jembot",
   "jembut",
   "goblok",
@@ -175,12 +188,15 @@ const toxicWords = [
   "itil",
   "silet",
   "ngentot",
-  "ngentod",
+  "ngentod", 
   "lonte",
   "bajingan",
   "keparat",
   "brengsek",
-  "silet",
+  "peli",
+  "pukimak",
+  "toket",
+  "pepek",
 ];
 
 module.exports = {

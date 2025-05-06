@@ -43,147 +43,6 @@ async function cleanAuthSession() {
   }
 }
 
-// Function to convert image to sticker
-async function convertToSticker(sock, msg, sender) {
-  try {
-    // Get the image message
-    const imageMessage = msg.message?.imageMessage;
-    if (!imageMessage) {
-      throw new Error("Pesan bukan gambar");
-    }
-
-    // Download the image
-    const buffer = await downloadMediaMessage(
-      msg, // Pass the entire message object
-      "buffer",
-      {},
-      {
-        logger: pino({ level: "error" }),
-        reuploadRequest: sock.updateMediaMessage,
-      }
-    );
-
-    if (!buffer) {
-      throw new Error("Gagal mengunduh gambar");
-    }
-
-    // Process image with sharp
-    const processedBuffer = await sharp(buffer)
-      .resize(512, 512, {
-        fit: "contain",
-        background: { r: 255, g: 255, b: 255, alpha: 0 },
-      })
-      .webp({ quality: 100 })
-      .toBuffer();
-
-    // Send as sticker
-    await sock.sendMessage(sender, {
-      sticker: processedBuffer,
-      mimetype: "image/webp",
-      isAnimated: false,
-      contextInfo: {
-        isForwarded: false,
-        forwardingScore: 0,
-        isStarred: false,
-      },
-      sendMediaAsSticker: true,
-      stickerInfo: {
-        pack: "Bot Sticker",
-        author: "Bot",
-      },
-    });
-  } catch (error) {
-    console.error("Error converting to sticker:", error);
-
-    // Kirim pesan error yang lebih spesifik
-    let errorMessage = "❌ Gagal mengkonversi gambar menjadi stiker.";
-    if (error.code === "ETIMEDOUT") {
-      errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
-    } else if (error.message.includes("download")) {
-      errorMessage += "\n📥 Gagal mengunduh gambar. Silakan coba lagi.";
-    } else if (error.message.includes("bukan gambar")) {
-      errorMessage = "❌ Pesan yang dikirim bukan gambar.";
-    } else if (error.message.includes("No message present")) {
-      errorMessage = "❌ Gagal memproses gambar. Silakan coba lagi.";
-    }
-
-    await sock.sendMessage(sender, {
-      text: errorMessage,
-    });
-  }
-}
-
-// Function to convert sticker to image
-async function convertStickerToImage(sock, msg, sender) {
-  try {
-    // Get the sticker message from either direct message or quoted message
-    const quotedMessage =
-      msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    const stickerMessage =
-      msg.message?.stickerMessage || quotedMessage?.stickerMessage;
-
-    if (!stickerMessage) {
-      throw new Error("Pesan bukan sticker");
-    }
-
-    // Create a proper message object for download
-    const messageToDownload = {
-      key: {
-        remoteJid: msg.key.remoteJid,
-        fromMe: msg.key.fromMe,
-        id: msg.key.id,
-        participant: msg.key.participant,
-      },
-      message: {
-        stickerMessage: stickerMessage,
-      },
-    };
-
-    // Download the sticker
-    const buffer = await downloadMediaMessage(
-      messageToDownload,
-      "buffer",
-      {
-        reuploadRequest: sock.updateMediaMessage,
-      },
-      {
-        logger: pino({ level: "error" }),
-      }
-    );
-
-    if (!buffer) {
-      throw new Error("Gagal mengunduh sticker");
-    }
-
-    // Convert buffer to image
-    const imageBuffer = await sharp(buffer).webp().toBuffer();
-
-    // Send as image
-    await sock.sendMessage(sender, {
-      image: imageBuffer,
-      caption: "✅ Sticker berhasil dikonversi menjadi gambar",
-    });
-  } catch (error) {
-    console.error("Error converting sticker to image:", error);
-
-    // Kirim pesan error yang lebih spesifik
-    let errorMessage = "❌ Gagal mengkonversi sticker menjadi gambar.";
-    if (error.code === "ETIMEDOUT") {
-      errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
-    } else if (error.message.includes("download")) {
-      errorMessage += "\n📥 Gagal mengunduh sticker. Silakan coba lagi.";
-    } else if (error.message.includes("bukan sticker")) {
-      errorMessage = "❌ Pesan yang dikirim bukan sticker.";
-    } else if (error.message.includes("No message present")) {
-      errorMessage = "❌ Silakan reply sticker yang ingin dikonversi.";
-    }
-
-    await sock.sendMessage(sender, {
-      text: errorMessage,
-    });
-  }
-}
-
 // Function to chat with AI
 async function chatWithAI(message) {
   try {
@@ -264,73 +123,6 @@ async function sendAudio(sock, sender, quotedMsg) {
     }
   }
 }
-
-// Fungsi untuk membersihkan kata dari karakter yang diulang
-function cleanWord(word) {
-  // Hapus karakter yang diulang lebih dari 2 kali
-  return word.toLowerCase().replace(/(.)\1{2,}/g, "$1$1");
-}
-
-// Fungsi untuk mengecek apakah pesan mengandung kata toxic
-function containsToxicWord(message) {
-  // Pisahkan pesan menjadi kata-kata
-  const words = message.toLowerCase().split(/\s+/);
-
-  // Cek setiap kata
-  return words.some((word) => {
-    // Bersihkan kata dari karakter yang diulang
-    const cleanedWord = cleanWord(word);
-
-    // Cek apakah kata yang sudah dibersihkan cocok dengan kata toxic
-    return toxicWords.some((toxic) => {
-      const cleanedToxic = cleanWord(toxic);
-
-      // Cek kecocokan dengan batasan kata
-      const wordBoundary = new RegExp(`\\b${cleanedToxic}\\b`, "i");
-      if (wordBoundary.test(cleanedWord)) {
-        return true;
-      }
-
-      // Cek variasi penulisan dengan batasan kata
-      const noVowelsWord = cleanedWord.replace(/[aiueo]/g, "");
-      const noVowelsToxic = cleanedToxic.replace(/[aiueo]/g, "");
-      if (noVowelsWord === noVowelsToxic && noVowelsWord.length > 2) {
-        return true;
-      }
-
-      // Cek penggantian angka dengan batasan kata
-      const normalizedWord = cleanedWord.replace(/0/g, "o").replace(/1/g, "i");
-      const normalizedToxic = cleanedToxic
-        .replace(/0/g, "o")
-        .replace(/1/g, "i");
-      if (normalizedWord === normalizedToxic && normalizedWord.length > 2) {
-        return true;
-      }
-
-      return false;
-    });
-  });
-}
-
-// Daftar kata-kata toxic
-const toxicWords = [
-  "anjing",
-  "anjeng",
-  "babi",
-  "bangsat",
-  "kontol",
-  "memek",
-  "jancok",
-  "jancuk",
-  "jembot",
-  "jembut",
-  "goblok",
-  "tolol",
-  "kimak",
-  "peler",
-  "itil",
-  "silet",
-];
 
 // Command handlers
 const commands = {
@@ -522,58 +314,6 @@ const commands = {
     await dosenHandler.deleteDosen(sock, sender, db, args);
   },
 
-  ".broadcast": async (sock, sender, db, args) => {
-    if (!args) {
-      await sock.sendMessage(sender, {
-        text: '❌ Format yang benar: .broadcast "[pesan]"',
-      });
-      return;
-    }
-
-    // Extract message content
-    const messageMatch = args.match(/^"([^"]+)"$/);
-    if (!messageMatch) {
-      await sock.sendMessage(sender, {
-        text: '❌ Format yang benar: .broadcast "[pesan]"\nPastikan pesan berada di dalam tanda kutip.',
-      });
-      return;
-    }
-
-    const messageContent = messageMatch[1];
-
-    // Opsi: Kirim ke grup yang terdaftar
-    try {
-      const groupCollection = db.collection("groups");
-      const groups = await groupCollection.find({}).toArray();
-
-      if (groups.length > 0) {
-        let successCount = 0;
-        for (const group of groups) {
-          try {
-            await sock.sendMessage(group.id, { text: messageContent });
-            successCount++;
-          } catch (error) {
-            console.error(`Error sending to group ${group.id}:`, error);
-          }
-        }
-
-        await sock.sendMessage(sender, {
-          text: `✅ Pesan broadcast berhasil dikirim ke ${successCount} dari ${groups.length} grup!`,
-        });
-        return;
-      } else {
-        await sock.sendMessage(sender, {
-          text: "❌ Tidak ada grup yang terdaftar untuk broadcast. Silakan tambahkan grup terlebih dahulu.",
-        });
-      }
-    } catch (error) {
-      console.error("Error saat mengirim broadcast ke grup:", error);
-      await sock.sendMessage(sender, {
-        text: "❌ Terjadi kesalahan saat mengirim broadcast.",
-      });
-    }
-  },
-
   ".ya": async (sock, sender, db) => {
     const collection = db.collection("schedules");
     const taskCollection = db.collection("tasks");
@@ -719,22 +459,6 @@ const commands = {
     await notificationHandler.unsubscribeNotification(sock, sender, db);
   },
 
-  ".setuju_jadwal": async (sock, sender, db, args) => {
-    const scheduleId = args.trim();
-    if (!scheduleId) {
-      await sock.sendMessage(sender, {
-        text: "❌ Format yang benar: .setuju_jadwal [id_jadwal]",
-      });
-      return;
-    }
-    await notificationHandler.approveScheduleNotification(
-      sock,
-      sender,
-      db,
-      scheduleId
-    );
-  },
-
   ".f100": async (sock, sender, db, args) => {
     // Cek apakah pesan dari grup
     if (!sender.endsWith("@g.us")) {
@@ -758,76 +482,6 @@ const commands = {
 
     await gameHandler.endFamily100(sock, sender, sender, db);
     await gameHandler.showScores(sock, sender);
-  },
-
-  ".tojpg": async (sock, msg, sender) => {
-    try {
-      // Get the sticker message from either direct message or quoted message
-      const quotedMessage =
-        msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-      const stickerMessage =
-        msg.message?.stickerMessage || quotedMessage?.stickerMessage;
-
-      if (!stickerMessage) {
-        throw new Error("Pesan bukan sticker");
-      }
-
-      // Create a proper message object for download
-      const messageToDownload = {
-        key: {
-          remoteJid: msg.key.remoteJid,
-          fromMe: msg.key.fromMe,
-          id: msg.key.id,
-          participant: msg.key.participant,
-        },
-        message: {
-          stickerMessage: stickerMessage,
-        },
-      };
-
-      // Download the sticker
-      const buffer = await downloadMediaMessage(
-        messageToDownload,
-        "buffer",
-        {
-          reuploadRequest: sock.updateMediaMessage,
-        },
-        {
-          logger: pino({ level: "error" }),
-        }
-      );
-
-      if (!buffer) {
-        throw new Error("Gagal mengunduh sticker");
-      }
-
-      // Convert buffer to image
-      const imageBuffer = await sharp(buffer).webp().toBuffer();
-
-      // Send as image
-      await sock.sendMessage(sender, {
-        image: imageBuffer,
-        caption: "✅ Sticker berhasil dikonversi menjadi gambar",
-      });
-    } catch (error) {
-      console.error("Error converting sticker to image:", error);
-
-      // Kirim pesan error yang lebih spesifik
-      let errorMessage = "❌ Gagal mengkonversi sticker menjadi gambar.";
-      if (error.code === "ETIMEDOUT") {
-        errorMessage += "\n⏱️ Waktu unduh habis. Silakan coba lagi.";
-      } else if (error.message.includes("download")) {
-        errorMessage += "\n📥 Gagal mengunduh sticker. Silakan coba lagi.";
-      } else if (error.message.includes("bukan sticker")) {
-        errorMessage = "❌ Pesan yang dikirim bukan sticker.";
-      } else if (error.message.includes("No message present")) {
-        errorMessage = "❌ Silakan reply sticker yang ingin dikonversi.";
-      }
-
-      await sock.sendMessage(sender, {
-        text: errorMessage,
-      });
-    }
   },
 
   ".stats": async (sock, sender, db) => {
@@ -980,47 +634,25 @@ async function startBot() {
             return;
           }
 
-          // Check for toxic words using the imported function
+          // Get the actual sender ID (participant in group or sender in private)
+          const actualSender = msg.key.participant || sender;
+
+          // Check for toxic words
           if (toxicHandler.containsToxicWord(messageText)) {
-            console.log("Toxic word detected in message:", messageText);
-            try {
-              // Get the toxic word
-              const toxicWord = toxicHandler.getToxicWord(messageText);
-              if (toxicWord) {
-                // Normalize sender ID for toxic stats
-                const normalizedSenderID = msg.key.participant
-                  ? normalizeUserID(msg.key.participant)
-                  : normalizeUserID(sender);
-
-                // Save toxic word count to database with normalized ID
-                await toxicHandler.saveToxicWordCount(
-                  db,
-                  normalizedSenderID,
-                  toxicWord
-                );
-              }
-              // Pass the original message object to quote it in the reply
+            const toxicWord = toxicHandler.getToxicWord(messageText);
+            if (toxicWord) {
+              await toxicHandler.saveToxicWordCount(
+                db,
+                actualSender,
+                toxicWord
+              );
               await sendAudio(sock, sender, msg);
-              console.log("Voice note response sent successfully");
-            } catch (error) {
-              console.error("Failed to send voice note response:", error);
             }
-            return;
           }
-
-          // Mendapatkan ID pengirim jika dalam grup
-          const rawSenderID = msg.key.participant || sender;
-
-          // Normalisasi ID pengirim dan grup
-          const normalizedSenderID = normalizeUserID(rawSenderID);
-
-          // Cek apakah pesan dari grup
-          const isGroup = sender.endsWith("@g.us");
 
           // Handle commands - now case-insensitive
           if (messageText.trim().startsWith(".")) {
             // Extract command and arguments, preserving case of arguments
-            // Use regex to remove the dot and any spaces that might follow it
             const fullCommand = messageText.trim().replace(/^\.\s*/, "");
 
             // Handle empty command (just a dot with maybe spaces)
@@ -1052,7 +684,7 @@ async function startBot() {
                 command.toLowerCase() === "start" ||
                 command.toLowerCase() === "stop"
               ) {
-                await commandHandler(sock, normalizedSenderID, db, args);
+                await commandHandler(sock, actualSender, db, args);
                 return;
               }
 
@@ -1061,22 +693,8 @@ async function startBot() {
                 return; // Bot is stopped, don't respond to any commands
               }
 
-              // Cek apakah ini adalah perintah yang berkaitan dengan tugas
-              if (command.toLowerCase() === "selesai") {
-                // Untuk tugas, gunakan ID pengirim yang dinormalisasi (bukan grup)
-                // Ini memastikan data status tugas pengguna konsisten di grup dan chat pribadi
-                await commandHandler(sock, normalizedSenderID, db, args);
-                // Kirim konfirmasi ke sumber pesan asli, tanpa mencantumkan status
-                if (isGroup) {
-                  // Jika pesan dari grup, hanya kirim konfirmasi sederhana
-                  const responseText = `✅ Perintah .selesai berhasil diproses`;
-                  await sock.sendMessage(sender, { text: responseText });
-                }
-                // Jika personal chat, respon akan dikirim oleh handler
-              } else {
-                // Untuk perintah lain, kirim respons ke sumber pesan (grup/pribadi)
-                await commandHandler(sock, sender, db, args);
-              }
+              // For other commands, use the original handler
+              await commandHandler(sock, sender, db, args);
             }
           } else {
             // If bot is stopped, don't process any non-command messages
@@ -1094,101 +712,24 @@ async function startBot() {
               }
             }
 
-            // Handle sticker conversion for images with caption ".s"
-            if (messageText.trim().toLowerCase() === ".s") {
-              // Check if the message is a reply to an image
-              const quotedMessage =
-                msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-              const imageMessage =
-                msg.message?.imageMessage || quotedMessage?.imageMessage;
-
-              if (imageMessage) {
-                // Create a proper message object for download if it's a quoted message
-                const messageToDownload = quotedMessage
-                  ? {
-                      key: {
-                        remoteJid: msg.key.remoteJid,
-                        fromMe:
-                          msg.message.extendedTextMessage.contextInfo
-                            .participant === sock.user.id,
-                        id: msg.message.extendedTextMessage.contextInfo
-                          .stanzaId,
-                      },
-                      message: {
-                        imageMessage: imageMessage,
-                      },
-                    }
-                  : msg;
-
-                await convertToSticker(sock, messageToDownload, sender);
-                return;
-              } else {
-                await sock.sendMessage(sender, {
-                  text: "❌ Silakan kirim gambar dengan caption .s atau reply gambar dengan pesan .s",
-                });
-                return;
-              }
-            }
-
-            // Handle sticker to image conversion with caption ".tojpg"
-            if (messageText.trim().toLowerCase() === ".tojpg") {
-              // Check if the message is a reply to a sticker
-              const isQuotedSticker =
-                msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
-                  ?.stickerMessage;
-              // Check if the message itself is a sticker
-              const isDirectSticker = msg.message?.stickerMessage;
-
-              if (isQuotedSticker || isDirectSticker) {
-                await commands[".tojpg"](sock, msg, sender);
-                return;
-              }
-            }
-
             // Cek apakah ada game Family 100 yang aktif di grup ini
-            if (isGroup && gameHandler.activeGames.has(sender)) {
+            if (
+              sender.endsWith("@g.us") &&
+              gameHandler.activeGames.has(sender)
+            ) {
               // Proses jawaban Family 100
               await gameHandler.processAnswer(
                 sock,
-                normalizedSenderID,
+                normalizeUserID(actualSender),
                 sender,
                 messageText,
                 db
               );
               return;
             }
-
-            if (
-              messageText.length > 50 ||
-              messageText.includes("pengumuman") ||
-              messageText.includes("tugas")
-            ) {
-              await collection.insertOne({
-                sender,
-                senderID: normalizedSenderID, // Simpan ID yang dinormalisasi
-                rawSenderID,
-                messageText,
-                isGroup,
-                timestamp: new Date(),
-                type: "announcement",
-              });
-            }
           }
         } catch (error) {
-          // Log the error but don't crash
           console.error("Error processing message:", error);
-
-          // If it's a decryption error, try to recover the session
-          if (error.message && error.message.includes("Bad MAC")) {
-            console.log(
-              "Decryption error detected, attempting to recover session..."
-            );
-            const fs = require("fs");
-            if (fs.existsSync("./auth_info")) {
-              fs.rmSync("./auth_info", { recursive: true, force: true });
-            }
-            startBot();
-          }
         }
       }
     });
